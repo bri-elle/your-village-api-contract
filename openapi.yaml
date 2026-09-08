@@ -1,0 +1,1070 @@
+openapi: 3.0.3
+
+info:
+  title: YourVillage API
+  version: 1.0.0
+  description: |
+    MVP API contract for YourVillage.
+
+    This contract covers the current MVP screens and core interactions.
+    Future/planned functionality such as reconnection, reflection,
+    account export/deletion, and active-person limit enforcement are
+    intentionally excluded from the MVP API.
+
+servers:
+  - url: https://api.example.com
+    description: Production
+
+tags:
+  - name: Auth
+  - name: People
+  - name: Me
+  - name: Memories
+  - name: Reminders
+  - name: AI
+  - name: Suggestions
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ----------------------------------------
+  # AUTH
+  # ----------------------------------------
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successfully logged in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/password-reset:
+    post:
+      tags: [Auth]
+      summary: Request a password reset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Password reset request accepted
+
+  # ----------------------------------------
+  # PEOPLE
+  # ----------------------------------------
+
+  /people:
+    get:
+      tags: [People]
+      summary: List people
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Search people by name
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of people
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Person'
+
+    post:
+      tags: [People]
+      summary: Create a person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePersonRequest'
+      responses:
+        '201':
+          description: Person created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /people/{id}:
+    get:
+      tags: [People]
+      summary: Get a person
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      responses:
+        '200':
+          description: Person details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [People]
+      summary: Update a person
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePersonRequest'
+      responses:
+        '200':
+          description: Person updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [People]
+      summary: Delete a person
+      description: |
+        Deletes the person and associated person data,
+        including memories, reminders, and audio associated
+        with that person.
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      responses:
+        '204':
+          description: Person deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /people/{id}/memories:
+    get:
+      tags: [Memories]
+      summary: List memories for a person
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      responses:
+        '200':
+          description: Memories belonging to the person
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Memory'
+
+    post:
+      tags: [Memories]
+      summary: Add a memory to a person's profile
+      parameters:
+        - $ref: '#/components/parameters/PersonId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMemoryRequest'
+      responses:
+        '201':
+          description: Memory created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+
+  # ----------------------------------------
+  # ME
+  # ----------------------------------------
+
+  /me:
+    get:
+      tags: [Me]
+      summary: Get current user profile
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Self'
+
+    patch:
+      tags: [Me]
+      summary: Update current user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSelfRequest'
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Self'
+
+  /me/memories:
+    get:
+      tags: [Memories]
+      summary: List current user's memories
+      responses:
+        '200':
+          description: User memories
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Memory'
+
+  # ----------------------------------------
+  # MEMORIES
+  # ----------------------------------------
+
+  /memories:
+    post:
+      tags: [Memories]
+      summary: Create a text memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMemoryRequest'
+      responses:
+        '201':
+          description: Memory created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+
+  /memories/voice:
+    post:
+      tags: [Memories]
+      summary: Upload a voice memory
+      description: |
+        Uploads an audio recording for asynchronous processing.
+
+        The API returns immediately with a processing status.
+        Transcription and AI extraction happen asynchronously.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - audio
+                - personIds
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: Voice recording
+                personIds:
+                  type: array
+                  items:
+                    type: string
+                  description: People this memory relates to
+      responses:
+        '202':
+          description: Voice memory accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceMemoryProcessingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ----------------------------------------
+  # REMINDERS
+  # ----------------------------------------
+
+  /reminders:
+    post:
+      tags: [Reminders]
+      summary: Create a reminder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReminderRequest'
+      responses:
+        '201':
+          description: Reminder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reminder'
+
+  # ----------------------------------------
+  # AI
+  # ----------------------------------------
+
+  /ai/rewrite:
+    post:
+      tags: [AI]
+      summary: Rewrite text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RewriteRequest'
+      responses:
+        '200':
+          description: Rewritten text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RewriteResponse'
+
+  /ai/extract-entities:
+    post:
+      tags: [AI]
+      summary: Extract useful details from text
+      description: |
+        Extracts AI-generated hooks and other useful entities
+        from captured text.
+
+        Hooks are AI-generated conversation context and are
+        separate from user-managed interests.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractEntitiesRequest'
+      responses:
+        '200':
+          description: Extracted entities
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entities]
+                properties:
+                  entities:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExtractedEntity'
+
+  /ai/extract-reminder:
+    post:
+      tags: [AI]
+      summary: Extract a possible reminder from text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtractReminderRequest'
+      responses:
+        '200':
+          description: Extracted reminder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtractedReminder'
+
+  # ----------------------------------------
+  # SUGGESTIONS / HOME
+  # ----------------------------------------
+
+  /suggestions:
+    get:
+      tags: [Suggestions]
+      summary: Get today's suggested actions
+      description: |
+        Returns up to 3 unexpired suggested actions for the
+        Home screen.
+
+        Suggestions expire after 24 hours.
+      responses:
+        '200':
+          description: Today's suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 3
+                    items:
+                      $ref: '#/components/schemas/SuggestedAction'
+
+  /suggestions/{id}/dismiss:
+    post:
+      tags: [Suggestions]
+      summary: Dismiss a suggestion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Suggestion dismissed
+
+  /suggestions/{id}/override:
+    post:
+      tags: [Suggestions]
+      summary: Override the suggested goal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goal]
+              properties:
+                goal:
+                  type: string
+      responses:
+        '204':
+          description: Goal override recorded
+
+
+components:
+
+  # ----------------------------------------
+  # SECURITY
+  # ----------------------------------------
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  # ----------------------------------------
+  # PARAMETERS
+  # ----------------------------------------
+
+  parameters:
+    PersonId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  # ----------------------------------------
+  # SCHEMAS
+  # ----------------------------------------
+
+  schemas:
+
+    # AUTH
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        name:
+          type: string
+
+    PasswordResetRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+
+    AuthResponse:
+      type: object
+      required:
+        - accessToken
+        - user
+      properties:
+        accessToken:
+          type: string
+        user:
+          $ref: '#/components/schemas/Self'
+
+    # PEOPLE
+
+    Person:
+      type: object
+      required:
+        - id
+        - name
+        - relationship
+        - interests
+        - hooks
+        - isFavorite
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+        relationship:
+          $ref: '#/components/schemas/RelationshipType'
+        birthday:
+          type: string
+          format: date
+        howYouKnowThem:
+          type: string
+        metWhere:
+          type: string
+        metWhen:
+          type: string
+        location:
+          type: string
+        about:
+          type: string
+
+        # User-managed profile information
+        interests:
+          type: array
+          items:
+            type: string
+          description: |
+            Interests explicitly added or managed by the user.
+
+        # AI-generated conversation context
+        hooks:
+          type: array
+          items:
+            type: string
+          description: |
+            AI-extracted conversation details that may be useful
+            for future context or suggestions. Hooks are separate
+            from user-managed interests.
+
+        openThreads:
+          type: array
+          items:
+            type: string
+
+        logistics:
+          type: string
+
+        vibe:
+          type: string
+
+        contactInfo:
+          type: string
+          nullable: true
+
+        notes:
+          type: string
+
+        isFavorite:
+          type: boolean
+
+        lastInteractionAt:
+          type: string
+          format: date-time
+
+        latestMemory:
+          $ref: '#/components/schemas/LatestMemory'
+
+    RelationshipType:
+      type: string
+      enum:
+        - friend
+        - family
+        - work
+        - other
+
+    CreatePersonRequest:
+      type: object
+      required:
+        - name
+        - relationship
+      properties:
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+        relationship:
+          $ref: '#/components/schemas/RelationshipType'
+        birthday:
+          type: string
+          format: date
+        howYouKnowThem:
+          type: string
+        metWhere:
+          type: string
+        metWhen:
+          type: string
+        location:
+          type: string
+        about:
+          type: string
+        interests:
+          type: array
+          items:
+            type: string
+        notes:
+          type: string
+
+    UpdatePersonRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+        relationship:
+          $ref: '#/components/schemas/RelationshipType'
+        birthday:
+          type: string
+          format: date
+        howYouKnowThem:
+          type: string
+        metWhere:
+          type: string
+        metWhen:
+          type: string
+        location:
+          type: string
+        about:
+          type: string
+        interests:
+          type: array
+          items:
+            type: string
+        contactInfo:
+          type: string
+          nullable: true
+        logistics:
+          type: string
+        vibe:
+          type: string
+        notes:
+          type: string
+        isFavorite:
+          type: boolean
+
+    LatestMemory:
+      type: object
+      required:
+        - title
+        - createdAt
+      properties:
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    # SELF
+
+    Self:
+      type: object
+      required:
+        - id
+        - name
+        - joinedAt
+        - interests
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+        quote:
+          type: string
+        location:
+          type: string
+        joinedAt:
+          type: string
+          format: date-time
+        about:
+          type: string
+        interests:
+          type: array
+          items:
+            type: string
+
+    UpdateSelfRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+        quote:
+          type: string
+        location:
+          type: string
+        about:
+          type: string
+        interests:
+          type: array
+          items:
+            type: string
+
+    # MEMORIES
+
+    Memory:
+      type: object
+      required:
+        - id
+        - type
+        - content
+        - source
+        - personIds
+        - createdAt
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - memory
+            - reminder
+            - note
+        title:
+          type: string
+        content:
+          type: string
+        source:
+          type: string
+          enum:
+            - voice
+            - text
+        personIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateMemoryRequest:
+      type: object
+      required:
+        - type
+        - content
+        - personIds
+        - source
+      properties:
+        type:
+          type: string
+          enum:
+            - memory
+            - reminder
+            - note
+        title:
+          type: string
+        content:
+          type: string
+        personIds:
+          type: array
+          items:
+            type: string
+        source:
+          type: string
+          enum:
+            - text
+            - voice
+
+    VoiceMemoryProcessingResponse:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - processing
+            - completed
+            - failed
+
+    # REMINDERS
+
+    Reminder:
+      type: object
+      required:
+        - id
+        - personId
+        - text
+        - completed
+      properties:
+        id:
+          type: string
+        personId:
+          type: string
+        text:
+          type: string
+        dueAt:
+          type: string
+          format: date-time
+        completed:
+          type: boolean
+
+    CreateReminderRequest:
+      type: object
+      required:
+        - personId
+        - text
+      properties:
+        personId:
+          type: string
+        text:
+          type: string
+        dueAt:
+          type: string
+          format: date-time
+
+    # AI
+
+    RewriteRequest:
+      type: object
+      required:
+        - content
+        - mode
+      properties:
+        content:
+          type: string
+        mode:
+          type: string
+          enum:
+            - concise
+            - grammar
+
+    RewriteResponse:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+
+    ExtractEntitiesRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+
+    ExtractedEntity:
+      type: object
+      required:
+        - type
+        - label
+      properties:
+        type:
+          type: string
+          enum:
+            - topic
+            - location
+            - activity
+            - hook
+        label:
+          type: string
+        icon:
+          type: string
+        confidence:
+          type: string
+          enum:
+            - high
+            - low
+
+    ExtractReminderRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+
+    ExtractedReminder:
+      type: object
+      properties:
+        text:
+          type: string
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    # SUGGESTIONS
+
+    SuggestedAction:
+      type: object
+      required:
+        - id
+        - personId
+        - contextLine
+        - goal
+        - triggerType
+        - expiresAt
+      properties:
+        id:
+          type: string
+        personId:
+          type: string
+        contextLine:
+          type: string
+        goal:
+          type: string
+        draft:
+          type: string
+        triggerType:
+          type: string
+          enum:
+            - openThread
+            - unconvertedInbound
+            - birthday
+        expiresAt:
+          type: string
+          format: date-time
+
+    # ERRORS
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+  # ----------------------------------------
+  # COMMON RESPONSES
+  # ----------------------------------------
+
+  responses:
+
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
