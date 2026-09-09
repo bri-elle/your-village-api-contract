@@ -4,12 +4,9 @@ info:
   title: YourVillage API
   version: 1.0.0
   description: |
-    MVP API contract for YourVillage.
-
-    This contract covers the current MVP screens and core interactions.
-    Future/planned functionality such as reconnection, reflection,
-    account export/deletion, and active-person limit enforcement are
-    intentionally excluded from the MVP API.
+    MVP API contract for YourVillage, synchronized with the Data Design Specification (DDD) 
+    and Product Brief. Features strict active-set limits, granular contact info tracking, 
+    rumination extraction support, and CBT behavioral experiment logging.
 
 servers:
   - url: https://api.example.com
@@ -19,6 +16,7 @@ tags:
   - name: Auth
   - name: People
   - name: Me
+  - name: Memos
   - name: Memories
   - name: Reminders
   - name: AI
@@ -105,6 +103,18 @@ paths:
           description: Search people by name
           schema:
             type: string
+        - name: status
+          in: query
+          required: false
+          description: Filter by contact status (active, archive)
+          schema:
+            $ref: '#/components/schemas/ContactStatus'
+        - name: activeTrack
+          in: query
+          required: false
+          description: Filter by tracking state (keeping, growing)
+          schema:
+            $ref: '#/components/schemas/ContactTrack'
       responses:
         '200':
           description: List of people
@@ -112,8 +122,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items]
+                required: [items, activeCount]
                 properties:
+                  activeCount:
+                    type: integer
+                    description: Current number of active contacts (capped at 15-25)
                   items:
                     type: array
                     items:
@@ -122,6 +135,7 @@ paths:
     post:
       tags: [People]
       summary: Create a person
+      description: Enforces active set capacity rules; adding past limits requires archiving an existing active contact.
       requestBody:
         required: true
         content:
@@ -136,7 +150,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Person'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: Bad request or active set cap exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /people/{id}:
     get:
@@ -178,10 +196,7 @@ paths:
     delete:
       tags: [People]
       summary: Delete a person
-      description: |
-        Deletes the person and associated person data,
-        including memories, reminders, and audio associated
-        with that person.
+      description: Deletes person and cascades deletion to hooks, open threads, nudge states, and captures per DDD.
       parameters:
         - $ref: '#/components/parameters/PersonId'
       responses:
@@ -239,7 +254,7 @@ paths:
       summary: Get current user profile
       responses:
         '200':
-          description: Current user
+          description: Current user profile
           content:
             application/json:
               schema:
@@ -280,14 +295,9 @@ paths:
                     items:
                       $ref: '#/components/schemas/Memory'
 
-  # ----------------------------------------
-  # MEMORIES
-  # ----------------------------------------
-
-  /memories:
     post:
       tags: [Memories]
-      summary: Create a text memory
+      summary: Add a personal memory/journal entry
       requestBody:
         required: true
         content:
@@ -302,41 +312,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/Memory'
 
-  /memories/voice:
-    post:
-      tags: [Memories]
-      summary: Upload a voice memory
-      description: |
-        Uploads an audio recording for asynchronous processing.
+  # ----------------------------------------
+  # MEMOS (Raw Capture Pipeline Inputs)
+  # ----------------------------------------
 
-        The API returns immediately with a processing status.
-        Transcription and AI extraction happen asynchronously.
+  /memos/text:
+    post:
+      tags: [Memos]
+      summary: Submit a raw text memo
+      description: Submits text input to trigger asynchronous entity extraction and rumination analysis.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTextMemoRequest'
+      responses:
+        '202':
+          description: Text memo accepted for extraction processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoProcessingResponse'
+
+  /memos/voice:
+    post:
+      tags: [Memos]
+      summary: Upload a voice memo
+      description: Uploads an audio recording for transcription, extraction, and rumination parsing. Audio is deleted post-transcription.
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required:
-                - audio
-                - personIds
+              required: [audio]
               properties:
                 audio:
                   type: string
                   format: binary
-                  description: Voice recording
-                personIds:
-                  type: array
-                  items:
-                    type: string
-                  description: People this memory relates to
+                  description: Voice recording buffer
       responses:
         '202':
-          description: Voice memory accepted for processing
+          description: Voice memo accepted into capture pipeline
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoiceMemoryProcessingResponse'
+                $ref: '#/components/schemas/MemoProcessingResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
 
@@ -388,12 +410,6 @@ paths:
     post:
       tags: [AI]
       summary: Extract useful details from text
-      description: |
-        Extracts AI-generated hooks and other useful entities
-        from captured text.
-
-        Hooks are AI-generated conversation context and are
-        separate from user-managed interests.
       requestBody:
         required: true
         content:
@@ -402,35 +418,11 @@ paths:
               $ref: '#/components/schemas/ExtractEntitiesRequest'
       responses:
         '200':
-          description: Extracted entities
+          description: Extracted entities conforming to CaptureExtractionOutput
           content:
             application/json:
               schema:
-                type: object
-                required: [entities]
-                properties:
-                  entities:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ExtractedEntity'
-
-  /ai/extract-reminder:
-    post:
-      tags: [AI]
-      summary: Extract a possible reminder from text
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExtractReminderRequest'
-      responses:
-        '200':
-          description: Extracted reminder
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExtractedReminder'
+                $ref: '#/components/schemas/CaptureExtractionOutput'
 
   # ----------------------------------------
   # SUGGESTIONS / HOME
@@ -440,11 +432,6 @@ paths:
     get:
       tags: [Suggestions]
       summary: Get today's suggested actions
-      description: |
-        Returns up to 3 unexpired suggested actions for the
-        Home screen.
-
-        Suggestions expire after 24 hours.
       responses:
         '200':
           description: Today's suggestions
@@ -464,6 +451,7 @@ paths:
     post:
       tags: [Suggestions]
       summary: Dismiss a suggestion
+      description: Guilt-free dismissal that logs quiet period constraints without penalties.
       parameters:
         - name: id
           in: path
@@ -498,22 +486,32 @@ paths:
         '204':
           description: Goal override recorded
 
+  # ----------------------------------------
+  # EXPERIMENTS (Behavioral Layer / CBT)
+  # ----------------------------------------
+
+  /experiments:
+    post:
+      tags: [Suggestions]
+      summary: Record a behavioral experiment prediction and outcome
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BehavioralExperiment'
+      responses:
+        '201':
+          description: Experiment recorded successfully
+
 
 components:
-
-  # ----------------------------------------
-  # SECURITY
-  # ----------------------------------------
 
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-
-  # ----------------------------------------
-  # PARAMETERS
-  # ----------------------------------------
 
   parameters:
     PersonId:
@@ -523,19 +521,11 @@ components:
       schema:
         type: string
 
-  # ----------------------------------------
-  # SCHEMAS
-  # ----------------------------------------
-
   schemas:
-
-    # AUTH
 
     LoginRequest:
       type: object
-      required:
-        - email
-        - password
+      required: [email, password]
       properties:
         email:
           type: string
@@ -546,10 +536,7 @@ components:
 
     RegisterRequest:
       type: object
-      required:
-        - email
-        - password
-        - name
+      required: [email, password, name]
       properties:
         email:
           type: string
@@ -562,8 +549,7 @@ components:
 
     PasswordResetRequest:
       type: object
-      required:
-        - email
+      required: [email]
       properties:
         email:
           type: string
@@ -571,497 +557,366 @@ components:
 
     AuthResponse:
       type: object
-      required:
-        - accessToken
-        - user
+      required: [accessToken, user]
       properties:
         accessToken:
           type: string
         user:
           $ref: '#/components/schemas/Self'
 
-    # PEOPLE
+    ContactStatus:
+      type: string
+      enum: [active, archive]
+
+    ContactTrack:
+      type: string
+      enum: [keeping, growing]
+
+    HookType:
+      type: string
+      enum: [general, reconnection]
+
+    ThreadStatus:
+      type: string
+      enum: [pending, completed, failed]
 
     Person:
       type: object
-      required:
-        - id
-        - name
-        - relationship
-        - interests
-        - hooks
-        - isFavorite
+      required: [id, name, status, activeTrack, hasContactInfo, isFavorite]
       properties:
         id:
           type: string
+        status:
+          $ref: '#/components/schemas/ContactStatus'
+        activeTrack:
+          $ref: '#/components/schemas/ContactTrack'
         name:
           type: string
         avatarUrl:
           type: string
           format: uri
-        relationship:
-          $ref: '#/components/schemas/RelationshipType'
-        birthday:
-          type: string
-          format: date
-        howYouKnowThem:
-          type: string
-        metWhere:
-          type: string
-        metWhen:
-          type: string
-        location:
-          type: string
-        about:
-          type: string
-
-        # User-managed profile information
-        interests:
-          type: array
-          items:
-            type: string
-          description: |
-            Interests explicitly added or managed by the user.
-
-        # AI-generated conversation context
-        hooks:
-          type: array
-          items:
-            type: string
-          description: |
-            AI-extracted conversation details that may be useful
-            for future context or suggestions. Hooks are separate
-            from user-managed interests.
-
-        openThreads:
-          type: array
-          items:
-            type: string
-
-        logistics:
-          type: string
-
-        vibe:
-          type: string
-
         contactInfo:
           type: string
           nullable: true
-
-        notes:
+          description: Phone number or handle. Nullable at capture and flagged aggressively.
+        hasContactInfo:
+          type: boolean
+          description: Explicit flag indicating whether usable contact info is present.
+        howWeMet:
           type: string
-
+        whereWeMet:
+          type: string
+        whenWeMet:
+          type: string
+          format: date-time
+        vibe:
+          type: string
+        logistics:
+          type: object
+          additionalProperties: true
+        hooks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hook'
+        openThreads:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpenThread'
         isFavorite:
           type: boolean
 
-        lastInteractionAt:
+    Hook:
+      type: object
+      required: [id, content, type]
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        type:
+          $ref: '#/components/schemas/HookType'
+        lastUsedAt:
           type: string
           format: date-time
+          nullable: true
 
-        latestMemory:
-          $ref: '#/components/schemas/LatestMemory'
-
-    RelationshipType:
-      type: string
-      enum:
-        - friend
-        - family
-        - work
-        - other
+    OpenThread:
+      type: object
+      required: [id, content, status]
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ThreadStatus'
 
     CreatePersonRequest:
       type: object
-      required:
-        - name
-        - relationship
+      required: [name]
       properties:
         name:
           type: string
-        avatarUrl:
+        contactInfo:
           type: string
-          format: uri
-        relationship:
-          $ref: '#/components/schemas/RelationshipType'
-        birthday:
+          nullable: true
+        howWeMet:
           type: string
-          format: date
-        howYouKnowThem:
+        whereWeMet:
           type: string
-        metWhere:
+        whenWeMet:
           type: string
-        metWhen:
+          format: date-time
+        vibe:
           type: string
-        location:
-          type: string
-        about:
-          type: string
-        interests:
-          type: array
-          items:
-            type: string
-        notes:
-          type: string
+        logistics:
+          type: object
+          additionalProperties: true
 
     UpdatePersonRequest:
       type: object
       properties:
+        status:
+          $ref: '#/components/schemas/ContactStatus'
+        activeTrack:
+          $ref: '#/components/schemas/ContactTrack'
         name:
           type: string
-        avatarUrl:
-          type: string
-          format: uri
-        relationship:
-          $ref: '#/components/schemas/RelationshipType'
-        birthday:
-          type: string
-          format: date
-        howYouKnowThem:
-          type: string
-        metWhere:
-          type: string
-        metWhen:
-          type: string
-        location:
-          type: string
-        about:
-          type: string
-        interests:
-          type: array
-          items:
-            type: string
         contactInfo:
           type: string
           nullable: true
-        logistics:
+        howWeMet:
           type: string
+        whereWeMet:
+          type: string
+        whenWeMet:
+          type: string
+          format: date-time
         vibe:
           type: string
-        notes:
-          type: string
+        logistics:
+          type: object
+          additionalProperties: true
         isFavorite:
           type: boolean
 
-    LatestMemory:
-      type: object
-      required:
-        - title
-        - createdAt
-      properties:
-        title:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-
-    # SELF
-
     Self:
       type: object
-      required:
-        - id
-        - name
-        - joinedAt
-        - interests
+      required: [id, full_name, weeklyRoutine, created_at]
       properties:
         id:
           type: string
-        name:
+        full_name:
           type: string
-        avatarUrl:
+        weeklyRoutine:
           type: string
-          format: uri
-        quote:
-          type: string
-        location:
-          type: string
-        joinedAt:
+        created_at:
           type: string
           format: date-time
-        about:
-          type: string
-        interests:
-          type: array
-          items:
-            type: string
 
     UpdateSelfRequest:
       type: object
       properties:
-        name:
+        full_name:
           type: string
-        avatarUrl:
+        weeklyRoutine:
           type: string
-          format: uri
-        quote:
+
+    CaptureExtractionOutput:
+      type: object
+      required: [personName, vibe, newHooks, newThreads]
+      properties:
+        personName:
           type: string
-        location:
+        contactInfo:
           type: string
-        about:
+          nullable: true
+        vibe:
           type: string
-        interests:
+        ruminationFeedback:
+          type: string
+          nullable: true
+          description: Extracted self-critical reflections handled separately by the CBT rumination catch.
+        newHooks:
           type: array
           items:
-            type: string
-
-    # MEMORIES
+            type: object
+            required: [content, type]
+            properties:
+              content:
+                type: string
+              type:
+                $ref: '#/components/schemas/HookType'
+        newThreads:
+          type: array
+          items:
+            type: object
+            required: [content]
+            properties:
+              content:
+                type: string
+              dueDate:
+                type: string
+                format: date-time
+        logistics:
+          type: object
+          additionalProperties: true
 
     Memory:
       type: object
-      required:
-        - id
-        - type
-        - content
-        - source
-        - personIds
-        - createdAt
+      required: [id, content, createdAt]
       properties:
         id:
           type: string
-        type:
-          type: string
-          enum:
-            - memory
-            - reminder
-            - note
-        title:
-          type: string
         content:
           type: string
-        source:
-          type: string
-          enum:
-            - voice
-            - text
-        personIds:
-          type: array
-          items:
-            type: string
         createdAt:
           type: string
           format: date-time
 
     CreateMemoryRequest:
       type: object
-      required:
-        - type
-        - content
-        - personIds
-        - source
+      required: [content]
       properties:
-        type:
-          type: string
-          enum:
-            - memory
-            - reminder
-            - note
-        title:
-          type: string
         content:
           type: string
-        personIds:
-          type: array
-          items:
-            type: string
-        source:
-          type: string
-          enum:
-            - text
-            - voice
 
-    VoiceMemoryProcessingResponse:
+    CreateTextMemoRequest:
       type: object
-      required:
-        - id
-        - status
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    MemoProcessingResponse:
+      type: object
+      required: [id, status]
       properties:
         id:
           type: string
         status:
           type: string
-          enum:
-            - processing
-            - completed
-            - failed
-
-    # REMINDERS
+          enum: [pending_transcription, pending_extraction, extracted, failed]
+        ruminationFeedback:
+          type: string
+          nullable: true
 
     Reminder:
       type: object
-      required:
-        - id
-        - personId
-        - text
-        - completed
+      required: [id, contactId, content, status]
       properties:
         id:
           type: string
-        personId:
+        contactId:
           type: string
-        text:
+        content:
           type: string
-        dueAt:
+        dueDate:
           type: string
           format: date-time
-        completed:
-          type: boolean
+        status:
+          $ref: '#/components/schemas/ThreadStatus'
 
     CreateReminderRequest:
       type: object
-      required:
-        - personId
-        - text
+      required: [contactId, content]
       properties:
-        personId:
+        contactId:
           type: string
-        text:
+        content:
           type: string
-        dueAt:
+        dueDate:
           type: string
           format: date-time
 
-    # AI
-
     RewriteRequest:
       type: object
-      required:
-        - content
-        - mode
+      required: [content, mode]
       properties:
         content:
           type: string
         mode:
           type: string
-          enum:
-            - concise
-            - grammar
+          enum: [concise, grammar]
 
     RewriteResponse:
       type: object
-      required:
-        - content
+      required: [content]
       properties:
         content:
           type: string
 
     ExtractEntitiesRequest:
       type: object
-      required:
-        - content
+      required: [content]
       properties:
         content:
           type: string
-
-    ExtractedEntity:
-      type: object
-      required:
-        - type
-        - label
-      properties:
-        type:
-          type: string
-          enum:
-            - topic
-            - location
-            - activity
-            - hook
-        label:
-          type: string
-        icon:
-          type: string
-        confidence:
-          type: string
-          enum:
-            - high
-            - low
-
-    ExtractReminderRequest:
-      type: object
-      required:
-        - content
-      properties:
-        content:
-          type: string
-
-    ExtractedReminder:
-      type: object
-      properties:
-        text:
-          type: string
-        dueAt:
-          type: string
-          format: date-time
-          nullable: true
-
-    # SUGGESTIONS
 
     SuggestedAction:
       type: object
-      required:
-        - id
-        - personId
-        - contextLine
-        - goal
-        - triggerType
-        - expiresAt
+      required: [id, contactId, goal, draft, expiresAt]
       properties:
         id:
           type: string
-        personId:
-          type: string
-        contextLine:
+        contactId:
           type: string
         goal:
           type: string
         draft:
           type: string
-        triggerType:
+        hookRef:
           type: string
-          enum:
-            - openThread
-            - unconvertedInbound
-            - birthday
+        confidence:
+          type: number
         expiresAt:
           type: string
           format: date-time
 
-    # ERRORS
+    BehavioralExperiment:
+      type: object
+      required: [contactId, prediction]
+      properties:
+        contactId:
+          type: string
+        prediction:
+          type: string
+          description: User's prediction of what will happen before reaching out.
+        outcome:
+          type: string
+          nullable: true
+          description: What actually happened after the interaction.
 
     Error:
       type: object
-      required:
-        - error
+      required: [error]
       properties:
         error:
           type: object
-          required:
-            - code
-            - message
+          required: [code, message]
           properties:
             code:
               type: string
             message:
               type: string
 
-  # ----------------------------------------
-  # COMMON RESPONSES
-  # ----------------------------------------
-
   responses:
-
     BadRequest:
       description: Invalid request
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-
     Unauthorized:
       description: Authentication required
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-
     NotFound:
       description: Resource not found
       content:
