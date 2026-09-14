@@ -529,12 +529,12 @@ components:
 
     Person:
       type: object
-      required: [id, name, personState, hasContactInfo, isFavorite]
+      required: [id, fullName, personState, hasContactInfo, isFavorite]
       properties:
         id: { type: string }
         personState:
           $ref: '#/components/schemas/PersonState'
-        name: { type: string }
+        fullName: { type: string }
         avatarUrl: { type: string, format: uri, nullable: true }
         contactInfo: { type: string, nullable: true }
         hasContactInfo: { type: boolean }
@@ -583,9 +583,9 @@ components:
 
     CreatePersonRequest:
       type: object
-      required: [name]
+      required: [fullName]
       properties:
-        name: { type: string }
+        fullName: { type: string }
         contactInfo: { type: string, nullable: true }
         howWeMet: { type: string }
         whereWeMet: { type: string }
@@ -599,7 +599,7 @@ components:
       type: object
       properties:
         personState: { $ref: '#/components/schemas/PersonState' }
-        name: { type: string }
+        fullName: { type: string }
         contactInfo: { type: string, nullable: true }
         howWeMet: { type: string }
         whereWeMet: { type: string }
@@ -696,34 +696,8 @@ components:
           properties:
             transcript: { type: string, nullable: true }
             extraction:
-              type: object
+              $ref: '#/components/schemas/CaptureExtractionOutput'
               nullable: true
-              properties:
-                personName: { type: string }
-                contactInfo: { type: string, nullable: true }
-                vibe: { type: string, nullable: true }
-                newHooks:
-                  type: array
-                  maxItems: 5
-                  items:
-                    type: object
-                    required: [content, kind]
-                    properties:
-                      content: { type: string }
-                      kind: { $ref: '#/components/schemas/HookKind' }
-                newThreads:
-                  type: array
-                  maxItems: 3
-                  items:
-                    type: object
-                    required: [content]
-                    properties:
-                      content: { type: string }
-                      dueDate: { type: string, format: date-time }
-                      kind: { $ref: '#/components/schemas/ThreadKind' }
-                context:
-                  type: object
-                  additionalProperties: true
             ruminationFeedback: { type: string, nullable: true }
 
     SuggestedAction:
@@ -758,6 +732,113 @@ components:
         prediction: { type: string }
         outcome: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+
+    
+    ExtractedHookEntry:
+      type: object
+      required: [content, kind]
+      properties:
+        content: { type: string }
+        kind: { $ref: '#/components/schemas/HookKind' }
+
+    ExtractedThreadEntry:
+      type: object
+      required: [content, kind]
+      properties:
+        content: { type: string }
+        dueDate: { type: string, format: date-time, nullable: true }
+        kind: { $ref: '#/components/schemas/ThreadKind' }
+
+    Candidate:
+      type: object
+      required: [personId, displayName, personState, hooks, threads]
+      properties:
+        personId: { type: string, format: uuid }
+        displayName: { type: string }
+        personState: { $ref: '#/components/schemas/PersonState' }
+        upcomingPlan: { type: object, nullable: true, description: Details of a known upcoming plan, if any. }
+        latestCapture: { type: object, nullable: true, description: Details of recent inbound activity. }
+        stalenessHint: { type: string, nullable: true }
+        hooks:
+          type: array
+          items: { $ref: '#/components/schemas/ExtractedHookEntry' }
+        threads:
+          type: array
+          items: { $ref: '#/components/schemas/ExtractedThreadEntry' }
+        history:
+          type: object
+          required: [allowedGoals]
+          properties:
+            allowedGoals:
+              type: array
+              items: { type: string, enum: [check_in, make_plan] }
+          description: Nudge history summary including allowed_goals.
+        nonMessageKind: { type: string, nullable: true, description: Advisory field indicating an available or recent non-message action. }
+
+    DecisionEngineInput:
+      type: object
+      required: [asOf, inputSnapshotId, trigger, user, budget, candidates]
+      properties:
+        asOf: { type: string, format: date-time, description: Frozen Clock. Exact time the snapshot was created. }
+        inputSnapshotId: { type: string, format: uuid, description: Unique ID for this snapshot version. }
+        trigger:
+          type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [scheduled, input_triggered] }
+            personId: { type: string, format: uuid, nullable: true }
+            capturesCompletedAt: { type: string, format: date-time, nullable: true }
+          description: Details the trigger.
+        user:
+          type: object
+          required: [timezone]
+          properties:
+            timezone: { type: string, description: IANA timezone format. }
+            routines: { type: object, description: Placeholder for user routines object. }
+          description: Contains user preferences.
+        budget:
+          type: object
+          required: [cardsRemaining, pushAvailable]
+          properties:
+            cardsRemaining: { type: integer }
+            pushAvailable: { type: boolean }
+          description: Contains cards_remaining and push_available status.
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/Candidate' }
+          description: Array of eligible contacts.
+
+    DecisionEngineOutput:
+      type: object
+      required: [decision, inputSnapshotId, rationale]
+      properties:
+        decision: { type: string, enum: [action, none] }
+        inputSnapshotId: { type: string, format: uuid }
+        personId: { type: string, format: uuid, nullable: true }
+        actionType: { type: string, enum: [message, non_message], nullable: true }
+        goal: { type: string, enum: [check_in, make_plan], nullable: true }
+        hookRef: { type: string, format: uuid, nullable: true }
+        draft: { type: string, nullable: true }
+        nonMessageAction: { type: object, nullable: true, description: Structured instruction for a non-message action (e.g., get contacts info). }
+        rationale: { type: string, description: Trace-only text describing the LLM's reasoning. }
+
+    CaptureExtractionOutput:
+      type: object
+      properties:
+        personName: { type: string }
+        contactInfo: { type: string, nullable: true }
+        vibe: { type: string, nullable: true }
+        newHooks:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ExtractedHookEntry' }
+        newThreads:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/ExtractedThreadEntry' }
+        context:
+          type: object
+          additionalProperties: true
 
     Error:
       type: object
