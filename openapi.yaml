@@ -3,24 +3,25 @@ openapi: 3.0.3
 info:
   title: YourVillage API
   version: 1.0.0
-  description: |
-    MVP API contract for YourVillage, synchronized with the Data Design Specification (DDD) 
-    and Product Brief. Features strict active-set limits, granular contact info tracking, 
-    rumination extraction support, and CBT behavioral experiment logging.
+  description: >
+    API contract for YourVillage, drafted directly from the Data Design
+    Specification (DDS). Authentication is handled client-side by the
+    Supabase Auth SDK — this contract has no auth endpoints. Every
+    endpoint derives the calling user from the authenticated session;
+    user_id is never accepted in a request body.
 
 servers:
   - url: https://api.example.com
     description: Production
 
 tags:
-  - name: Auth
-  - name: People
   - name: Me
-  - name: Memos
-  - name: Memories
-  - name: Reminders
-  - name: AI
+  - name: People
+  - name: Threads
+  - name: Captures
   - name: Suggestions
+  - name: Experiments
+  - name: AI
 
 security:
   - bearerAuth: []
@@ -28,224 +29,7 @@ security:
 paths:
 
   # ----------------------------------------
-  # AUTH
-  # ----------------------------------------
-
-  /auth/login:
-    post:
-      tags: [Auth]
-      summary: Log in
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-      responses:
-        '200':
-          description: Successfully logged in
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/register:
-    post:
-      tags: [Auth]
-      summary: Create an account
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RegisterRequest'
-      responses:
-        '201':
-          description: Account created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-
-  /auth/password-reset:
-    post:
-      tags: [Auth]
-      summary: Request a password reset
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PasswordResetRequest'
-      responses:
-        '200':
-          description: Password reset request accepted
-
-  # ----------------------------------------
-  # PEOPLE
-  # ----------------------------------------
-
-  /people:
-    get:
-      tags: [People]
-      summary: List people
-      parameters:
-        - name: q
-          in: query
-          required: false
-          description: Search people by name
-          schema:
-            type: string
-        - name: status
-          in: query
-          required: false
-          description: Filter by contact status (active, archive)
-          schema:
-            $ref: '#/components/schemas/ContactStatus'
-        - name: activeTrack
-          in: query
-          required: false
-          description: Filter by tracking state (keeping, growing)
-          schema:
-            $ref: '#/components/schemas/ContactTrack'
-      responses:
-        '200':
-          description: List of people
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items, activeCount]
-                properties:
-                  activeCount:
-                    type: integer
-                    description: Current number of active contacts (capped at 15-25)
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Person'
-
-    post:
-      tags: [People]
-      summary: Create a person
-      description: Enforces active set capacity rules; adding past limits requires archiving an existing active contact.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePersonRequest'
-      responses:
-        '201':
-          description: Person created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Person'
-        '400':
-          description: Bad request or active set cap exceeded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /people/{id}:
-    get:
-      tags: [People]
-      summary: Get a person
-      parameters:
-        - $ref: '#/components/parameters/PersonId'
-      responses:
-        '200':
-          description: Person details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Person'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    patch:
-      tags: [People]
-      summary: Update a person
-      parameters:
-        - $ref: '#/components/parameters/PersonId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePersonRequest'
-      responses:
-        '200':
-          description: Person updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Person'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-    delete:
-      tags: [People]
-      summary: Delete a person
-      description: Deletes person and cascades deletion to hooks, open threads, nudge states, and captures per DDD.
-      parameters:
-        - $ref: '#/components/parameters/PersonId'
-      responses:
-        '204':
-          description: Person deleted
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /people/{id}/memories:
-    get:
-      tags: [Memories]
-      summary: List memories for a person
-      parameters:
-        - $ref: '#/components/parameters/PersonId'
-      responses:
-        '200':
-          description: Memories belonging to the person
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Memory'
-
-    post:
-      tags: [Memories]
-      summary: Add a memory to a person's profile
-      parameters:
-        - $ref: '#/components/parameters/PersonId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateMemoryRequest'
-      responses:
-        '201':
-          description: Memory created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Memory'
-
-  # ----------------------------------------
-  # ME
+  # ME (profiles)
   # ----------------------------------------
 
   /me:
@@ -277,13 +61,117 @@ paths:
               schema:
                 $ref: '#/components/schemas/Self'
 
-  /me/memories:
+  # ----------------------------------------
+  # PEOPLE (contacts)
+  # ----------------------------------------
+
+  /people:
     get:
-      tags: [Memories]
-      summary: List current user's memories
+      tags: [People]
+      summary: List people
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Search by name
+        - name: personState
+          in: query
+          schema:
+            $ref: '#/components/schemas/PersonState'
+          description: >
+            Filter by state. "returning" surfaces reconnection candidates —
+            no separate reconnection endpoint exists, it's this filter.
       responses:
         '200':
-          description: User memories
+          description: List of people
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, activeCount]
+                properties:
+                  activeCount:
+                    type: integer
+                    description: Count of contacts in growing/keeping states.
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Person'
+
+    post:
+      tags: [People]
+      summary: Create a person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePersonRequest'
+      responses:
+        '201':
+          description: Person created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /people/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PersonId'
+    get:
+      tags: [People]
+      summary: Get a person
+      responses:
+        '200':
+          description: Person details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [People]
+      summary: Update a person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePersonRequest'
+      responses:
+        '200':
+          description: Person updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [People]
+      summary: Delete a person
+      description: Cascades to hooks, threads, nudge state, and captures for this person.
+      responses:
+        '204':
+          description: Person deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /people/{id}/captures:
+    parameters:
+      - $ref: '#/components/parameters/PersonId'
+    get:
+      tags: [Captures]
+      summary: List raw capture history for a person
+      description: Audit trail of transcripts/text memos linked to this person.
+      responses:
+        '200':
+          description: Captures linked to this person
           content:
             application/json:
               schema:
@@ -293,139 +181,162 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Memory'
+                      $ref: '#/components/schemas/CaptureSummary'
 
+  /people/{id}/threads:
+    parameters:
+      - $ref: '#/components/parameters/PersonId'
     post:
-      tags: [Memories]
-      summary: Add a personal memory/journal entry
+      tags: [Threads]
+      summary: Create a thread (commitment/follow-up)
+      description: >
+        Covers both AI-extracted commitments and user-set reminders — a
+        reminder is a thread with kind "commitment_mine".
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateMemoryRequest'
+              $ref: '#/components/schemas/CreateThreadRequest'
       responses:
         '201':
-          description: Memory created
+          description: Thread created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Memory'
+                $ref: '#/components/schemas/OpenThread'
 
-  # ----------------------------------------
-  # MEMOS (Raw Capture Pipeline Inputs)
-  # ----------------------------------------
-
-  /memos/text:
-    post:
-      tags: [Memos]
-      summary: Submit a raw text memo
-      description: Submits text input to trigger asynchronous entity extraction and rumination analysis.
+  /people/{personId}/threads/{threadId}:
+    parameters:
+      - name: personId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: threadId
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Threads]
+      summary: Update a thread's status
+      description: >
+        Resolving a thread (e.g. "did it happen? yes") is how a reported
+        real-world interaction is logged — this is what should drive
+        person_state transitions (growing → keeping), not any in-app
+        action like copying a draft.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/CreateTextMemoRequest'
-      responses:
-        '202':
-          description: Text memo accepted for extraction processing
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MemoProcessingResponse'
-
-  /memos/voice:
-    post:
-      tags: [Memos]
-      summary: Upload a voice memo
-      description: Uploads an audio recording for transcription, extraction, and rumination parsing. Audio is deleted post-transcription.
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
             schema:
               type: object
-              required: [audio]
+              required: [status]
               properties:
-                audio:
-                  type: string
-                  format: binary
-                  description: Voice recording buffer
+                status:
+                  $ref: '#/components/schemas/ThreadStatus'
+      responses:
+        '200':
+          description: Thread updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenThread'
+
+  # ----------------------------------------
+  # CAPTURES (raw input pipeline)
+  # ----------------------------------------
+
+  /captures/text:
+    post:
+      tags: [Captures]
+      summary: Submit a text memo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTextCaptureRequest'
       responses:
         '202':
-          description: Voice memo accepted into capture pipeline
+          description: Accepted for extraction
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MemoProcessingResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                $ref: '#/components/schemas/CaptureStatus'
 
-  # ----------------------------------------
-  # REMINDERS
-  # ----------------------------------------
-
-  /reminders:
+  /captures/voice:
     post:
-      tags: [Reminders]
-      summary: Create a reminder
+      tags: [Captures]
+      summary: Register a voice memo for transcription
+      description: >
+        The frontend uploads the audio directly to a private Supabase
+        Storage bucket (RLS-scoped to the authenticated user) and submits
+        only the resulting path. The API never receives raw audio bytes.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateReminderRequest'
+              $ref: '#/components/schemas/CreateVoiceCaptureRequest'
       responses:
-        '201':
-          description: Reminder created
+        '202':
+          description: Accepted for transcription
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Reminder'
+                $ref: '#/components/schemas/CaptureStatus'
 
-  # ----------------------------------------
-  # AI
-  # ----------------------------------------
-
-  /ai/rewrite:
-    post:
-      tags: [AI]
-      summary: Rewrite text
-      requestBody:
+  /captures/{id}:
+    parameters:
+      - name: id
+        in: path
         required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RewriteRequest'
+        schema: { type: string }
+    get:
+      tags: [Captures]
+      summary: Get capture status, transcript, and extraction result
       responses:
         '200':
-          description: Rewritten text
+          description: Current capture state
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RewriteResponse'
+                $ref: '#/components/schemas/CaptureDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
-  /ai/extract-entities:
-    post:
-      tags: [AI]
-      summary: Extract useful details from text
+    patch:
+      tags: [Captures]
+      summary: Submit reviewed transcript and target contact(s) to trigger extraction
+      description: >
+        Called after the user reviews/edits the transcript. Extraction
+        runs on this approved text, not the raw transcription output.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ExtractEntitiesRequest'
+              type: object
+              required: [transcript, contactIds]
+              properties:
+                transcript:
+                  type: string
+                contactIds:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Existing contact IDs, or omit to let extraction propose
+                    a new contact for manual approval.
       responses:
-        '200':
-          description: Extracted entities conforming to CaptureExtractionOutput
+        '202':
+          description: Accepted for extraction
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CaptureExtractionOutput'
+                $ref: '#/components/schemas/CaptureStatus'
 
   # ----------------------------------------
-  # SUGGESTIONS / HOME
+  # SUGGESTIONS (nudges)
   # ----------------------------------------
 
   /suggestions:
@@ -434,7 +345,7 @@ paths:
       summary: Get today's suggested actions
       responses:
         '200':
-          description: Today's suggestions
+          description: Current suggestions
           content:
             application/json:
               schema:
@@ -447,31 +358,48 @@ paths:
                     items:
                       $ref: '#/components/schemas/SuggestedAction'
 
-  /suggestions/{id}/dismiss:
+  /suggestions/{id}/act:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
     post:
       tags: [Suggestions]
-      summary: Dismiss a suggestion
-      description: Guilt-free dismissal that logs quiet period constraints without penalties.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      summary: Mark a suggestion as acted on (e.g. draft copied/shared)
+      description: >
+        Updates nudge status only. Does not by itself change person_state —
+        only a resolved thread (reported real-world interaction) does that.
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuggestedAction'
+
+  /suggestions/{id}/dismiss:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Suggestions]
+      summary: Dismiss a suggestion ("Not now")
       responses:
         '204':
-          description: Suggestion dismissed
+          description: Dismissed
 
   /suggestions/{id}/override:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
     post:
       tags: [Suggestions]
       summary: Override the suggested goal
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         required: true
         content:
@@ -480,30 +408,86 @@ paths:
               type: object
               required: [goal]
               properties:
-                goal:
-                  type: string
+                goal: { type: string }
       responses:
         '204':
-          description: Goal override recorded
+          description: Override recorded
 
   # ----------------------------------------
-  # EXPERIMENTS (Behavioral Layer / CBT)
+  # EXPERIMENTS (behavioral layer)
   # ----------------------------------------
 
   /experiments:
     post:
-      tags: [Suggestions]
-      summary: Record a behavioral experiment prediction and outcome
+      tags: [Experiments]
+      summary: Log a prediction before a hard reach-out
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/BehavioralExperiment'
+              $ref: '#/components/schemas/CreateExperimentRequest'
       responses:
         '201':
-          description: Experiment recorded successfully
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Experiment'
 
+  /experiments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Experiments]
+      summary: Log the outcome of a prediction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              properties:
+                outcome: { type: string }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Experiment'
+
+  # ----------------------------------------
+  # AI (stateless utility calls)
+  # ----------------------------------------
+
+  /ai/rewrite:
+    post:
+      tags: [AI]
+      summary: Rewrite text (concise / grammar)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content, mode]
+              properties:
+                content: { type: string }
+                mode: { type: string, enum: [concise, grammar] }
+      responses:
+        '200':
+          description: Rewritten text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: string }
 
 components:
 
@@ -512,384 +496,268 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: Supabase-issued session access token.
 
   parameters:
     PersonId:
       name: id
       in: path
       required: true
-      schema:
-        type: string
+      schema: { type: string }
 
   schemas:
 
-    LoginRequest:
-      type: object
-      required: [email, password]
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-          format: password
-
-    RegisterRequest:
-      type: object
-      required: [email, password, name]
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-          format: password
-        name:
-          type: string
-
-    PasswordResetRequest:
-      type: object
-      required: [email]
-      properties:
-        email:
-          type: string
-          format: email
-
-    AuthResponse:
-      type: object
-      required: [accessToken, user]
-      properties:
-        accessToken:
-          type: string
-        user:
-          $ref: '#/components/schemas/Self'
-
-    ContactStatus:
+    PersonState:
       type: string
-      enum: [active, archive]
+      enum: [growing, keeping, returning, archive]
 
-    ContactTrack:
+    HookKind:
       type: string
-      enum: [keeping, growing]
-
-    HookType:
-      type: string
-      enum: [general, reconnection]
+      enum: [durable, routine, context, recent, time_bound]
 
     ThreadStatus:
       type: string
-      enum: [pending, completed, failed]
+      enum: [open, attempted, resolved, lapsed]
+
+    ThreadKind:
+      type: string
+      enum: [plan_shaped, commitment_theirs, commitment_mine, time_bound]
+
+    CaptureProcessingStatus:
+      type: string
+      enum: [pending_transcription, pending_extraction, extracted, failed]
 
     Person:
       type: object
-      required: [id, name, status, activeTrack, hasContactInfo, isFavorite]
+      required: [id, name, personState, hasContactInfo, isFavorite]
       properties:
-        id:
-          type: string
-        status:
-          $ref: '#/components/schemas/ContactStatus'
-        activeTrack:
-          $ref: '#/components/schemas/ContactTrack'
-        name:
-          type: string
-        avatarUrl:
-          type: string
-          format: uri
-        contactInfo:
-          type: string
-          nullable: true
-          description: Phone number or handle. Nullable at capture and flagged aggressively.
-        hasContactInfo:
-          type: boolean
-          description: Explicit flag indicating whether usable contact info is present.
-        howWeMet:
-          type: string
-        whereWeMet:
-          type: string
-        whenWeMet:
-          type: string
-          format: date-time
-        vibe:
-          type: string
-        logistics:
+        id: { type: string }
+        personState:
+          $ref: '#/components/schemas/PersonState'
+        name: { type: string }
+        avatarUrl: { type: string, format: uri, nullable: true }
+        contactInfo: { type: string, nullable: true }
+        hasContactInfo: { type: boolean }
+        howWeMet: { type: string, nullable: true }
+        whereWeMet: { type: string, nullable: true }
+        whenWeMet: { type: string, format: date-time, nullable: true }
+        vibe: { type: string, nullable: true }
+        context:
           type: object
           additionalProperties: true
+          description: Flexible non-normalized facts (location, work, family, availability, etc.)
         hooks:
           type: array
-          items:
-            $ref: '#/components/schemas/Hook'
+          items: { $ref: '#/components/schemas/Hook' }
         openThreads:
           type: array
-          items:
-            $ref: '#/components/schemas/OpenThread'
-        isFavorite:
-          type: boolean
+          items: { $ref: '#/components/schemas/OpenThread' }
+        isFavorite: { type: boolean }
 
     Hook:
       type: object
-      required: [id, content, type]
+      required: [id, content, kind]
       properties:
-        id:
-          type: string
-        content:
-          type: string
-        type:
-          $ref: '#/components/schemas/HookType'
-        lastUsedAt:
-          type: string
-          format: date-time
-          nullable: true
+        id: { type: string }
+        content: { type: string }
+        kind: { $ref: '#/components/schemas/HookKind' }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
 
     OpenThread:
       type: object
-      required: [id, content, status]
+      required: [id, content, status, kind]
       properties:
-        id:
-          type: string
-        content:
-          type: string
-        dueDate:
-          type: string
-          format: date-time
-          nullable: true
-        status:
-          $ref: '#/components/schemas/ThreadStatus'
+        id: { type: string }
+        content: { type: string }
+        dueDate: { type: string, format: date-time, nullable: true }
+        status: { $ref: '#/components/schemas/ThreadStatus' }
+        kind: { $ref: '#/components/schemas/ThreadKind' }
+
+    CreateThreadRequest:
+      type: object
+      required: [content, kind]
+      properties:
+        content: { type: string }
+        dueDate: { type: string, format: date-time }
+        kind: { $ref: '#/components/schemas/ThreadKind' }
 
     CreatePersonRequest:
       type: object
       required: [name]
       properties:
-        name:
-          type: string
-        contactInfo:
-          type: string
-          nullable: true
-        howWeMet:
-          type: string
-        whereWeMet:
-          type: string
-        whenWeMet:
-          type: string
-          format: date-time
-        vibe:
-          type: string
-        logistics:
+        name: { type: string }
+        contactInfo: { type: string, nullable: true }
+        howWeMet: { type: string }
+        whereWeMet: { type: string }
+        whenWeMet: { type: string, format: date-time }
+        vibe: { type: string }
+        context:
           type: object
           additionalProperties: true
 
     UpdatePersonRequest:
       type: object
       properties:
-        status:
-          $ref: '#/components/schemas/ContactStatus'
-        activeTrack:
-          $ref: '#/components/schemas/ContactTrack'
-        name:
-          type: string
-        contactInfo:
-          type: string
-          nullable: true
-        howWeMet:
-          type: string
-        whereWeMet:
-          type: string
-        whenWeMet:
-          type: string
-          format: date-time
-        vibe:
-          type: string
-        logistics:
+        personState: { $ref: '#/components/schemas/PersonState' }
+        name: { type: string }
+        contactInfo: { type: string, nullable: true }
+        howWeMet: { type: string }
+        whereWeMet: { type: string }
+        whenWeMet: { type: string, format: date-time }
+        vibe: { type: string }
+        context:
           type: object
           additionalProperties: true
-        isFavorite:
-          type: boolean
+        isFavorite: { type: boolean }
 
     Self:
       type: object
-      required: [id, full_name, weeklyRoutine, created_at]
+      required: [id, fullName, relationshipGoals, createdAt]
       properties:
-        id:
-          type: string
-        full_name:
-          type: string
-        weeklyRoutine:
-          type: string
-        created_at:
-          type: string
-          format: date-time
+        id: { type: string }
+        fullName: { type: string }
+        ageRange: { type: string, nullable: true }
+        occupationIndustry: { type: string, nullable: true }
+        interestsHobbies:
+          type: array
+          items: { type: string }
+        socialActivities:
+          type: array
+          items: { type: string }
+        relationshipGoals:
+          type: array
+          items: { type: string }
+          minItems: 1
+        commPreferences:
+          type: array
+          items: { type: string }
+        weeklyRoutine: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
 
     UpdateSelfRequest:
       type: object
       properties:
-        full_name:
-          type: string
-        weeklyRoutine:
-          type: string
-
-    CaptureExtractionOutput:
-      type: object
-      required: [personName, vibe, newHooks, newThreads]
-      properties:
-        personName:
-          type: string
-        contactInfo:
-          type: string
-          nullable: true
-        vibe:
-          type: string
-        ruminationFeedback:
-          type: string
-          nullable: true
-          description: Extracted self-critical reflections handled separately by the CBT rumination catch.
-        newHooks:
+        fullName: { type: string }
+        ageRange: { type: string }
+        occupationIndustry: { type: string }
+        interestsHobbies:
           type: array
-          items:
-            type: object
-            required: [content, type]
-            properties:
-              content:
-                type: string
-              type:
-                $ref: '#/components/schemas/HookType'
-        newThreads:
+          items: { type: string }
+        socialActivities:
           type: array
-          items:
-            type: object
-            required: [content]
-            properties:
-              content:
-                type: string
-              dueDate:
-                type: string
-                format: date-time
-        logistics:
-          type: object
-          additionalProperties: true
+          items: { type: string }
+        relationshipGoals:
+          type: array
+          items: { type: string }
+        commPreferences:
+          type: array
+          items: { type: string }
+        weeklyRoutine: { type: string }
 
-    Memory:
-      type: object
-      required: [id, content, createdAt]
-      properties:
-        id:
-          type: string
-        content:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-
-    CreateMemoryRequest:
+    CreateTextCaptureRequest:
       type: object
       required: [content]
       properties:
-        content:
-          type: string
+        content: { type: string }
+        contactIds:
+          type: array
+          items: { type: string }
 
-    CreateTextMemoRequest:
+    CreateVoiceCaptureRequest:
       type: object
-      required: [content]
+      required: [audioStoragePath]
       properties:
-        content:
+        audioStoragePath:
           type: string
+          description: 'e.g. "{userId}/{captureId}.webm"'
+        contactIds:
+          type: array
+          items: { type: string }
 
-    MemoProcessingResponse:
+    CaptureStatus:
       type: object
       required: [id, status]
       properties:
-        id:
-          type: string
-        status:
-          type: string
-          enum: [pending_transcription, pending_extraction, extracted, failed]
-        ruminationFeedback:
-          type: string
-          nullable: true
+        id: { type: string }
+        status: { $ref: '#/components/schemas/CaptureProcessingStatus' }
 
-    Reminder:
+    CaptureSummary:
       type: object
-      required: [id, contactId, content, status]
+      required: [id, transcript, createdAt]
       properties:
-        id:
-          type: string
-        contactId:
-          type: string
-        content:
-          type: string
-        dueDate:
-          type: string
-          format: date-time
-        status:
-          $ref: '#/components/schemas/ThreadStatus'
+        id: { type: string }
+        transcript: { type: string }
+        createdAt: { type: string, format: date-time }
 
-    CreateReminderRequest:
-      type: object
-      required: [contactId, content]
-      properties:
-        contactId:
-          type: string
-        content:
-          type: string
-        dueDate:
-          type: string
-          format: date-time
-
-    RewriteRequest:
-      type: object
-      required: [content, mode]
-      properties:
-        content:
-          type: string
-        mode:
-          type: string
-          enum: [concise, grammar]
-
-    RewriteResponse:
-      type: object
-      required: [content]
-      properties:
-        content:
-          type: string
-
-    ExtractEntitiesRequest:
-      type: object
-      required: [content]
-      properties:
-        content:
-          type: string
+    CaptureDetail:
+      allOf:
+        - $ref: '#/components/schemas/CaptureStatus'
+        - type: object
+          properties:
+            transcript: { type: string, nullable: true }
+            extraction:
+              type: object
+              nullable: true
+              properties:
+                personName: { type: string }
+                contactInfo: { type: string, nullable: true }
+                vibe: { type: string, nullable: true }
+                newHooks:
+                  type: array
+                  maxItems: 5
+                  items:
+                    type: object
+                    required: [content, kind]
+                    properties:
+                      content: { type: string }
+                      kind: { $ref: '#/components/schemas/HookKind' }
+                newThreads:
+                  type: array
+                  maxItems: 3
+                  items:
+                    type: object
+                    required: [content]
+                    properties:
+                      content: { type: string }
+                      dueDate: { type: string, format: date-time }
+                      kind: { $ref: '#/components/schemas/ThreadKind' }
+                context:
+                  type: object
+                  additionalProperties: true
+            ruminationFeedback: { type: string, nullable: true }
 
     SuggestedAction:
       type: object
-      required: [id, contactId, goal, draft, expiresAt]
+      required: [id, personId, goal, actionType, expiresAt]
       properties:
-        id:
-          type: string
-        contactId:
-          type: string
-        goal:
-          type: string
-        draft:
-          type: string
-        hookRef:
-          type: string
-        confidence:
-          type: number
-        expiresAt:
-          type: string
-          format: date-time
-
-    BehavioralExperiment:
-      type: object
-      required: [contactId, prediction]
-      properties:
-        contactId:
-          type: string
-        prediction:
-          type: string
-          description: User's prediction of what will happen before reaching out.
-        outcome:
-          type: string
+        id: { type: string }
+        personId: { type: string }
+        goal: { type: string }
+        actionType: { type: string, enum: [message, non_message] }
+        draft: { type: string, nullable: true }
+        nonMessageAction:
+          type: object
           nullable: true
-          description: What actually happened after the interaction.
+          additionalProperties: true
+        hookRef: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time }
+
+    CreateExperimentRequest:
+      type: object
+      required: [personId, prediction]
+      properties:
+        personId: { type: string }
+        prediction: { type: string }
+
+    Experiment:
+      type: object
+      required: [id, personId, prediction, createdAt]
+      properties:
+        id: { type: string }
+        personId: { type: string }
+        prediction: { type: string }
+        outcome: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
 
     Error:
       type: object
@@ -899,27 +767,22 @@ components:
           type: object
           required: [code, message]
           properties:
-            code:
-              type: string
-            message:
-              type: string
+            code: { type: string }
+            message: { type: string }
 
   responses:
     BadRequest:
       description: Invalid request
       content:
         application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
+          schema: { $ref: '#/components/schemas/Error' }
     Unauthorized:
       description: Authentication required
       content:
         application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
+          schema: { $ref: '#/components/schemas/Error' }
     NotFound:
       description: Resource not found
       content:
         application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
+          schema: { $ref: '#/components/schemas/Error' }
