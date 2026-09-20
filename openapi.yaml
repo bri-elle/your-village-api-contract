@@ -3,12 +3,11 @@ openapi: 3.0.3
 info:
   title: YourVillage API
   version: 1.0.0
-  description: >
+  description: >-
     API contract for YourVillage, drafted directly from the Data Design
     Specification (DDS). Authentication is handled client-side by the
     Supabase Auth SDK — this contract has no auth endpoints. Every
     endpoint derives the calling user from the authenticated session;
-    user_id is never accepted in a request body.
 
 servers:
   - url: https://api.example.com
@@ -78,7 +77,7 @@ paths:
           in: query
           schema:
             $ref: '#/components/schemas/PersonState'
-          description: >
+          description: >-
             Filter by state. "returning" surfaces reconnection candidates —
             no separate reconnection endpoint exists, it's this filter.
       responses:
@@ -189,7 +188,7 @@ paths:
     post:
       tags: [Threads]
       summary: Create a thread (commitment/follow-up)
-      description: >
+      description: >-
         Covers both AI-extracted commitments and user-set reminders — a
         reminder is a thread with kind "commitment_mine".
       requestBody:
@@ -219,7 +218,7 @@ paths:
     patch:
       tags: [Threads]
       summary: Update a thread's status
-      description: >
+      description: >-
         Resolving a thread (e.g. "did it happen? yes") is how a reported
         real-world interaction is logged — this is what should drive
         person_state transitions (growing → keeping), not any in-app
@@ -268,7 +267,7 @@ paths:
     post:
       tags: [Captures]
       summary: Register a voice memo for transcription
-      description: >
+      description: >-
         The frontend uploads the audio directly to a private Supabase
         Storage bucket (RLS-scoped to the authenticated user) and submits
         only the resulting path. The API never receives raw audio bytes.
@@ -308,7 +307,7 @@ paths:
     patch:
       tags: [Captures]
       summary: Submit reviewed transcript and target contact(s) to trigger extraction
-      description: >
+      description: >-
         Called after the user reviews/edits the transcript. Extraction
         runs on this approved text, not the raw transcription output.
       requestBody:
@@ -324,7 +323,7 @@ paths:
                 contactIds:
                   type: array
                   items: { type: string }
-                  description: >
+                  description: >-
                     Existing contact IDs, or omit to let extraction propose
                     a new contact for manual approval.
       responses:
@@ -367,7 +366,7 @@ paths:
     post:
       tags: [Suggestions]
       summary: Mark a suggestion as acted on (e.g. draft copied/shared)
-      description: >
+      description: >-
         Updates nudge status only. Does not by itself change person_state —
         only a resolved thread (reported real-world interaction) does that.
       responses:
@@ -527,9 +526,13 @@ components:
       type: string
       enum: [pending_transcription, pending_extraction, extracted, failed]
 
+    RelationshipType:
+      type: string
+      enum: [friend, family, colleague, acquaintance, mentor, peer]
+
     Person:
       type: object
-      required: [id, fullName, personState, hasContactInfo, isFavorite]
+      required: [id, fullName, personState]
       properties:
         id: { type: string }
         personState:
@@ -538,10 +541,9 @@ components:
         avatarUrl: { type: string, format: uri, nullable: true }
         contactInfo: { type: string, nullable: true }
         hasContactInfo: { type: boolean }
-        howWeMet: { type: string, nullable: true }
+        relationship: { $ref: '#/components/schemas/RelationshipType', nullable: true }
         whereWeMet: { type: string, nullable: true }
         whenWeMet: { type: string, format: date-time, nullable: true }
-        vibe: { type: string, nullable: true }
         context:
           type: object
           additionalProperties: true
@@ -587,10 +589,9 @@ components:
       properties:
         fullName: { type: string }
         contactInfo: { type: string, nullable: true }
-        howWeMet: { type: string }
+        relationship: { $ref: '#/components/schemas/RelationshipType', nullable: true }
         whereWeMet: { type: string }
         whenWeMet: { type: string, format: date-time }
-        vibe: { type: string }
         context:
           type: object
           additionalProperties: true
@@ -601,10 +602,9 @@ components:
         personState: { $ref: '#/components/schemas/PersonState' }
         fullName: { type: string }
         contactInfo: { type: string, nullable: true }
-        howWeMet: { type: string }
+        relationship: { $ref: '#/components/schemas/RelationshipType', nullable: true }
         whereWeMet: { type: string }
         whenWeMet: { type: string, format: date-time }
-        vibe: { type: string }
         context:
           type: object
           additionalProperties: true
@@ -827,7 +827,6 @@ components:
       properties:
         personName: { type: string }
         contactInfo: { type: string, nullable: true }
-        vibe: { type: string, nullable: true }
         newHooks:
           type: array
           maxItems: 5
