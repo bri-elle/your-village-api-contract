@@ -10,8 +10,8 @@ info:
     endpoint derives the calling user from the authenticated session;
 
 servers:
-  - url: https://api.example.com
-    description: Production
+  - url: /api
+    description: Next.js API base path
 
 tags:
   - name: Me
@@ -20,13 +20,11 @@ tags:
   - name: Captures
   - name: Suggestions
   - name: Experiments
-  - name: AI
 
 security:
   - bearerAuth: []
 
 paths:
-
   # ----------------------------------------
   # ME (profiles)
   # ----------------------------------------
@@ -73,13 +71,15 @@ paths:
           in: query
           schema: { type: string }
           description: Search by name
-        - name: personState
+        - name: relationshipState
           in: query
           schema:
-            $ref: '#/components/schemas/PersonState'
+            $ref: '#/components/schemas/RelationshipState'
           description: >-
             Filter by state. "returning" surfaces reconnection candidates —
             no separate reconnection endpoint exists, it's this filter.
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/OffsetParam'
       responses:
         '200':
           description: List of people
@@ -154,7 +154,10 @@ paths:
     delete:
       tags: [People]
       summary: Delete a person
-      description: Cascades to hooks, threads, nudge state, and captures for this person.
+      description: >-
+        Cascades to hooks, threads, and nudge state for this person. The
+        database unlinks this person's ID from captures.contact_ids while
+        retaining capture records in the user's account history.
       responses:
         '204':
           description: Person deleted
@@ -164,6 +167,8 @@ paths:
   /people/{id}/captures:
     parameters:
       - $ref: '#/components/parameters/PersonId'
+      - $ref: '#/components/parameters/LimitParam'
+      - $ref: '#/components/parameters/OffsetParam'
     get:
       tags: [Captures]
       summary: List raw capture history for a person
@@ -221,7 +226,7 @@ paths:
       description: >-
         Resolving a thread (e.g. "did it happen? yes") is how a reported
         real-world interaction is logged — this is what should drive
-        person_state transitions (growing → keeping), not any in-app
+        relationship_state transitions (growing → keeping), not any in-app
         action like copying a draft.
       requestBody:
         required: true
@@ -316,16 +321,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [transcript, contactIds]
+              required: [transcript]
               properties:
                 transcript:
                   type: string
                 contactIds:
                   type: array
+                  minItems: 1
                   items: { type: string }
                   description: >-
-                    Existing contact IDs, or omit to let extraction propose
-                    a new contact for manual approval.
+                    Existing contact IDs. Omit this field to let extraction
+                    propose a new contact for manual approval.
       responses:
         '202':
           description: Accepted for extraction
@@ -367,7 +373,7 @@ paths:
       tags: [Suggestions]
       summary: Mark a suggestion as acted on (e.g. draft copied/shared)
       description: >-
-        Updates nudge status only. Does not by itself change person_state —
+        Updates nudge status only. Does not by itself change relationship_state —
         only a resolved thread (reported real-world interaction) does that.
       responses:
         '200':
@@ -460,43 +466,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Experiment'
 
-  # ----------------------------------------
-  # AI (stateless utility calls)
-  # ----------------------------------------
-
-  /ai/rewrite:
-    post:
-      tags: [AI]
-      summary: Rewrite text (concise / grammar)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [content, mode]
-              properties:
-                content: { type: string }
-                mode: { type: string, enum: [concise, grammar] }
-      responses:
-        '200':
-          description: Rewritten text
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  content: { type: string }
-
 components:
-
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
       description: Supabase-issued session access token.
-
   parameters:
     PersonId:
       name: id
@@ -504,9 +480,29 @@ components:
       required: true
       schema: { type: string }
 
-  schemas:
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 100
+      description: Number of items to return.
 
-    PersonState:
+    OffsetParam:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+      description: Offset for pagination.
+
+  schemas:
+    RelationshipState:
       type: string
       enum: [growing, keeping, returning, archive]
 
@@ -524,37 +520,60 @@ components:
 
     CaptureProcessingStatus:
       type: string
-      enum: [pending_transcription, pending_extraction, extracted, failed]
+      enum: [pending_transcription, pending_review, pending_extraction, extracted, failed]
+      description: >-
+        Voice captures progress from pending_transcription to pending_review
+        once a transcript is available, then to pending_extraction after the
+        user submits the reviewed transcript. Text captures enter
+        pending_extraction directly. Both flows end extracted or failed.
 
     RelationshipType:
       type: string
-      enum: [friend, family, colleague, acquaintance, mentor, peer]
+      enum: [friend, family, colleague, acquaintance, mentor, peer, partner]
 
     Person:
       type: object
-      required: [id, fullName, personState]
+      required: [id, fullName, relationshipState, hooks, openThreads]
       properties:
         id: { type: string }
-        personState:
-          $ref: '#/components/schemas/PersonState'
+        relationshipState:
+          $ref: '#/components/schemas/RelationshipState'
         fullName: { type: string }
         avatarUrl: { type: string, format: uri, nullable: true }
-        contactInfo: { type: string, nullable: true }
-        hasContactInfo: { type: boolean }
+        isFavorite:
+          { type: boolean, description: Favorite flag for contact prioritization/filtering. }
+        birthday:
+          {
+            type: string,
+            format: date,
+            nullable: true,
+            description: Contact birthday (YYYY-MM-DD).,
+          }
+        memories:
+          type: array
+          items: { type: string }
+          nullable: true
+          description: Image gallery URLs for memories.
         relationship: { $ref: '#/components/schemas/RelationshipType', nullable: true }
         whereWeMet: { type: string, nullable: true }
         whenWeMet: { type: string, format: date-time, nullable: true }
+        lastInteraction:
+          {
+            type: string,
+            format: date-time,
+            nullable: true,
+            description: Timestamp of the last interaction with this contact. Crucial for tracking relationship activity and powering Story 3 (Returning).,
+          }
         context:
           type: object
           additionalProperties: true
-          description: Flexible non-normalized facts (location, work, family, availability, etc.)
+          description: Structured JSON containing personal facts (e.g., corgi names, shared memories, location, work, family, availability) for personalized messaging.
         hooks:
           type: array
           items: { $ref: '#/components/schemas/Hook' }
         openThreads:
           type: array
           items: { $ref: '#/components/schemas/OpenThread' }
-        isFavorite: { type: boolean }
 
     Hook:
       type: object
@@ -563,6 +582,8 @@ components:
         id: { type: string }
         content: { type: string }
         kind: { $ref: '#/components/schemas/HookKind' }
+        captureId:
+          { type: string, format: uuid, nullable: true, description: Source capture for this fact. }
         lastUsedAt: { type: string, format: date-time, nullable: true }
 
     OpenThread:
@@ -574,13 +595,20 @@ components:
         dueDate: { type: string, format: date-time, nullable: true }
         status: { $ref: '#/components/schemas/ThreadStatus' }
         kind: { $ref: '#/components/schemas/ThreadKind' }
+        captureId:
+          {
+            type: string,
+            format: uuid,
+            nullable: true,
+            description: Source capture for this commitment.,
+          }
 
     CreateThreadRequest:
       type: object
       required: [content, kind]
       properties:
         content: { type: string }
-        dueDate: { type: string, format: date-time }
+        dueDate: { type: string, format: date-time, nullable: true }
         kind: { $ref: '#/components/schemas/ThreadKind' }
 
     CreatePersonRequest:
@@ -588,27 +616,54 @@ components:
       required: [fullName]
       properties:
         fullName: { type: string }
-        contactInfo: { type: string, nullable: true }
         relationship: { $ref: '#/components/schemas/RelationshipType', nullable: true }
+        isFavorite: { type: boolean, nullable: true }
+        birthday: { type: string, format: date, nullable: true }
+        memories:
+          type: array
+          items: { type: string }
+          nullable: true
+          description: Image gallery URLs for memories.
         whereWeMet: { type: string }
         whenWeMet: { type: string, format: date-time }
+        lastInteraction:
+          {
+            type: string,
+            format: date-time,
+            nullable: true,
+            description: Timestamp of the last interaction with this contact.,
+          }
         context:
           type: object
           additionalProperties: true
+          description: Structured JSON containing personal facts (e.g., corgi names, shared memories, location, work, family, availability) for personalized messaging.
 
     UpdatePersonRequest:
       type: object
       properties:
-        personState: { $ref: '#/components/schemas/PersonState' }
+        relationshipState: { $ref: '#/components/schemas/RelationshipState' }
         fullName: { type: string }
-        contactInfo: { type: string, nullable: true }
         relationship: { $ref: '#/components/schemas/RelationshipType', nullable: true }
+        isFavorite: { type: boolean, nullable: true }
+        birthday: { type: string, format: date, nullable: true }
+        memories:
+          type: array
+          items: { type: string }
+          nullable: true
+          description: Image gallery URLs for memories.
         whereWeMet: { type: string }
         whenWeMet: { type: string, format: date-time }
+        lastInteraction:
+          {
+            type: string,
+            format: date-time,
+            nullable: true,
+            description: Timestamp of the last interaction with this contact.,
+          }
         context:
           type: object
           additionalProperties: true
-        isFavorite: { type: boolean }
+          description: Structured JSON containing personal facts (e.g., corgi names, shared memories, location, work, family, availability) for personalized messaging.
 
     Self:
       type: object
@@ -616,7 +671,24 @@ components:
       properties:
         id: { type: string }
         fullName: { type: string }
-        ageRange: { type: string, nullable: true }
+        age:
+          {
+            type: integer,
+            nullable: true,
+            description: Stores the precise age from the User Profile Data.,
+          }
+        location:
+          {
+            type: string,
+            nullable: true,
+            description: Stores the current location from the User Profile Data.,
+          }
+        notes:
+          {
+            type: string,
+            nullable: true,
+            description: Stores general user notes not covered by other fields.,
+          }
         occupationIndustry: { type: string, nullable: true }
         interestsHobbies:
           type: array
@@ -638,7 +710,24 @@ components:
       type: object
       properties:
         fullName: { type: string }
-        ageRange: { type: string }
+        age:
+          {
+            type: integer,
+            nullable: true,
+            description: Stores the precise age from the User Profile Data.,
+          }
+        location:
+          {
+            type: string,
+            nullable: true,
+            description: Stores the current location from the User Profile Data.,
+          }
+        notes:
+          {
+            type: string,
+            nullable: true,
+            description: Stores general user notes not covered by other fields.,
+          }
         occupationIndustry: { type: string }
         interestsHobbies:
           type: array
@@ -662,6 +751,10 @@ components:
         contactIds:
           type: array
           items: { type: string }
+        followUp:
+          type: object
+          nullable: true
+          description: Structured trigger logic (e.g., target date, conditions, status) required for proactive suggestions in Stories 1 and 2.
 
     CreateVoiceCaptureRequest:
       type: object
@@ -673,6 +766,10 @@ components:
         contactIds:
           type: array
           items: { type: string }
+        followUp:
+          type: object
+          nullable: true
+          description: Structured trigger logic (e.g., target date, conditions, status) required for proactive suggestions in Stories 1 and 2.
 
     CaptureStatus:
       type: object
@@ -687,6 +784,10 @@ components:
       properties:
         id: { type: string }
         transcript: { type: string }
+        followUp:
+          type: object
+          nullable: true
+          description: Structured trigger logic (e.g., target date, conditions, status) required for proactive suggestions.
         createdAt: { type: string, format: date-time }
 
     CaptureDetail:
@@ -698,23 +799,110 @@ components:
             extraction:
               $ref: '#/components/schemas/CaptureExtractionOutput'
               nullable: true
+            followUp:
+              type: object
+              nullable: true
+              description: >-
+                Structured trigger logic (e.g., target date, conditions, status)
+                required for reliable execution of proactive suggestions in Stories 1 and 2.
+              properties:
+                targetDate: { type: string, format: date-time, nullable: true }
+                conditions: { type: string, nullable: true }
+                status: { type: string, nullable: true }
+              additionalProperties: true
             ruminationFeedback: { type: string, nullable: true }
+            failure:
+              $ref: '#/components/schemas/CaptureFailure'
+              nullable: true
+
+    CaptureFailure:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      description: Stable failure details when a capture status is failed.
+      properties:
+        code: { type: string, description: Stable machine-readable error code. }
+        message: { type: string, description: User-facing explanation. }
+        retryable: { type: boolean, description: Whether retrying the capture can succeed. }
+
+    CaptureExtractionOutput:
+      type: object
+      required: [personName, newHooks, newThreads, context]
+      properties:
+        personName: { type: string }
+        newHooks:
+          type: array
+          items: { $ref: '#/components/schemas/ExtractedHookEntry' }
+        newThreads:
+          type: array
+          items: { $ref: '#/components/schemas/ExtractedThreadEntry' }
+        context:
+          type: object
+          additionalProperties: true
+          description: Extensible contact facts; actionable commitments remain threads.
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
 
     SuggestedAction:
+      oneOf:
+        - $ref: '#/components/schemas/MessageSuggestedAction'
+        - $ref: '#/components/schemas/NonMessageSuggestedAction'
+      discriminator:
+        propertyName: actionType
+        mapping:
+          message: '#/components/schemas/MessageSuggestedAction'
+          non_message: '#/components/schemas/NonMessageSuggestedAction'
+
+    MessageSuggestedAction:
       type: object
-      required: [id, personId, goal, actionType, expiresAt]
+      additionalProperties: false
+      required: [id, personId, goal, actionType, inputSnapshotId, draft, expiresAt]
       properties:
         id: { type: string }
         personId: { type: string }
-        goal: { type: string }
-        actionType: { type: string, enum: [message, non_message] }
-        draft: { type: string, nullable: true }
-        nonMessageAction:
-          type: object
-          nullable: true
-          additionalProperties: true
+        goal: { type: string, enum: [check_in, make_plan] }
+        actionType: { type: string, enum: [message] }
+        inputSnapshotId:
+          { type: string, description: Immutable decision snapshot that produced this suggestion. }
+        draft: { type: string }
         hookRef: { type: string, nullable: true }
+        threadRef: { type: string, nullable: true }
         expiresAt: { type: string, format: date-time }
+
+    NonMessageSuggestedAction:
+      type: object
+      additionalProperties: false
+      required: [id, personId, goal, actionType, inputSnapshotId, nonMessageAction, expiresAt]
+      properties:
+        id: { type: string }
+        personId: { type: string }
+        goal: { type: string, enum: [check_in, make_plan] }
+        actionType: { type: string, enum: [non_message] }
+        inputSnapshotId:
+          { type: string, description: Immutable decision snapshot that produced this suggestion. }
+        nonMessageAction:
+          $ref: '#/components/schemas/NonMessageAction'
+        hookRef: { type: string, nullable: true }
+        threadRef: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time }
+
+    NonMessageAction:
+      type: object
+      additionalProperties: false
+      required: [kind, label, payload]
+      properties:
+        kind: { type: string }
+        label: { type: string }
+        payload: { type: object, additionalProperties: true }
 
     CreateExperimentRequest:
       type: object
@@ -733,7 +921,6 @@ components:
         outcome: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
 
-    
     ExtractedHookEntry:
       type: object
       required: [content, kind]
@@ -751,13 +938,22 @@ components:
 
     Candidate:
       type: object
-      required: [personId, displayName, personState, hooks, threads]
+      required: [personId, displayName, relationshipState, hooks, threads]
       properties:
         personId: { type: string, format: uuid }
         displayName: { type: string }
-        personState: { $ref: '#/components/schemas/PersonState' }
-        upcomingPlan: { type: object, nullable: true, description: Details of a known upcoming plan, if any. }
-        latestCapture: { type: object, nullable: true, description: Details of recent inbound activity. }
+        relationshipState: { $ref: '#/components/schemas/RelationshipState' }
+        lastInteraction:
+          {
+            type: string,
+            format: date-time,
+            nullable: true,
+            description: Timestamp of the last reported interaction. Powers Story 3 (Returning) and quiet period logic.,
+          }
+        upcomingPlan:
+          { type: object, nullable: true, description: Details of a known upcoming plan, if any. }
+        latestCapture:
+          { type: object, nullable: true, description: Details of recent inbound activity. }
         stalenessHint: { type: string, nullable: true }
         hooks:
           type: array
@@ -773,19 +969,29 @@ components:
               type: array
               items: { type: string, enum: [check_in, make_plan] }
           description: Nudge history summary including allowed_goals.
-        nonMessageKind: { type: string, nullable: true, description: Advisory field indicating an available or recent non-message action. }
+        nonMessageKind:
+          {
+            type: string,
+            nullable: true,
+            description: Advisory field indicating an available or recent non-message action.,
+          }
 
     DecisionEngineInput:
       type: object
       required: [asOf, inputSnapshotId, trigger, user, budget, candidates]
       properties:
-        asOf: { type: string, format: date-time, description: Frozen Clock. Exact time the snapshot was created. }
-        inputSnapshotId: { type: string, format: uuid, description: Unique ID for this snapshot version. }
+        asOf:
+          {
+            type: string,
+            format: date-time,
+            description: Frozen Clock. Exact time the snapshot was created.,
+          }
+        inputSnapshotId: { type: string, description: Unique ID for this snapshot version. }
         trigger:
           type: object
           required: [type]
           properties:
-            type: { type: string, enum: [scheduled, input_triggered] }
+            type: { type: string, enum: [scheduled, input_triggered, manual_request] }
             personId: { type: string, format: uuid, nullable: true }
             capturesCompletedAt: { type: string, format: date-time, nullable: true }
           description: Details the trigger.
@@ -809,55 +1015,424 @@ components:
           description: Array of eligible contacts.
 
     DecisionEngineOutput:
+      oneOf:
+        - $ref: '#/components/schemas/NoDecisionOutput'
+        - $ref: '#/components/schemas/MessageDecisionOutput'
+        - $ref: '#/components/schemas/NonMessageDecisionOutput'
+
+    NoDecisionOutput:
       type: object
+      additionalProperties: false
       required: [decision, inputSnapshotId, rationale]
       properties:
-        decision: { type: string, enum: [action, none] }
-        inputSnapshotId: { type: string, format: uuid }
-        personId: { type: string, format: uuid, nullable: true }
-        actionType: { type: string, enum: [message, non_message], nullable: true }
-        goal: { type: string, enum: [check_in, make_plan], nullable: true }
-        hookRef: { type: string, format: uuid, nullable: true }
-        draft: { type: string, nullable: true }
-        nonMessageAction: { type: object, nullable: true, description: Structured instruction for a non-message action (e.g., get contacts info). }
-        rationale: { type: string, description: Trace-only text describing the LLM's reasoning. }
+        decision: { type: string, enum: [none] }
+        inputSnapshotId: { type: string }
+        rationale: { type: string, description: Trace-only decision rationale. }
 
-    CaptureExtractionOutput:
+    MessageDecisionOutput:
+      type: object
+      additionalProperties: false
+      required: [decision, inputSnapshotId, personId, actionType, goal, draft, rationale]
+      properties:
+        decision: { type: string, enum: [action] }
+        inputSnapshotId: { type: string }
+        personId: { type: string }
+        actionType: { type: string, enum: [message] }
+        goal: { type: string, enum: [check_in, make_plan] }
+        hookRef: { type: string, nullable: true }
+        draft: { type: string }
+        rationale: { type: string, description: Trace-only decision rationale. }
+
+    NonMessageDecisionOutput:
+      type: object
+      additionalProperties: false
+      required: [decision, inputSnapshotId, personId, actionType, goal, nonMessageAction, rationale]
+      properties:
+        decision: { type: string, enum: [action] }
+        inputSnapshotId: { type: string }
+        personId: { type: string }
+        actionType: { type: string, enum: [non_message] }
+        goal: { type: string, enum: [check_in, make_plan] }
+        nonMessageAction: { $ref: '#/components/schemas/NonMessageAction' }
+        rationale: { type: string, description: Trace-only decision rationale. }
+
+    PythonDecisionCandidate:
+      description: >-
+        Private Python decision-engine candidate. This schema is not an HTTP
+        payload or endpoint; the boundary maps public personId,
+        relationshipState, openThreads, and nonMessageAction to person_id,
+        relationship_state, open_threads, and non_message_action.
+      type: object
+      required:
+        - person_id
+        - display_name
+        - relationship_state
+        - hooks
+        - open_threads
+      properties:
+        person_id: { type: string }
+        display_name: { type: string }
+        profile:
+          $ref: '#/components/schemas/PythonDecisionCandidateProfile'
+        relationship_state:
+          $ref: '#/components/schemas/RelationshipState'
+        state_since: { type: string, format: date-time, nullable: true }
+        captured_at: { type: string, format: date-time, nullable: true }
+        last_reported_interaction_at: { type: string, format: date-time, nullable: true }
+        last_interaction: { type: string, format: date-time, nullable: true }
+        reported_interaction_count: { type: integer, minimum: 0, default: 0 }
+        upcoming_plan: { type: object, nullable: true, additionalProperties: true }
+        inbound: { type: object, nullable: true, additionalProperties: true }
+        staleness_hint: { type: string, nullable: true }
+        hooks:
+          type: array
+          items: { $ref: '#/components/schemas/PythonDecisionHook' }
+        open_threads:
+          type: array
+          items: { $ref: '#/components/schemas/PythonDecisionOpenThread' }
+        history:
+          $ref: '#/components/schemas/PythonDecisionCandidateHistory'
+        non_message_kind: { type: string, nullable: true }
+        transcript_excerpts:
+          type: array
+          items: { type: string }
+          description: Data-minimized/redacted snippets only; raw transcripts are never included.
+
+    PythonDecisionCandidateProfile:
       type: object
       properties:
-        personName: { type: string }
-        contactInfo: { type: string, nullable: true }
-        newHooks:
-          type: array
-          maxItems: 5
-          items: { $ref: '#/components/schemas/ExtractedHookEntry' }
-        newThreads:
-          type: array
-          maxItems: 3
-          items: { $ref: '#/components/schemas/ExtractedThreadEntry' }
-        context:
-          type: object
-          additionalProperties: true
+        how_we_met: { type: string, nullable: true }
+        logistics: { type: string, nullable: true }
+        contact_info_present: { type: boolean, default: true }
 
-    Error:
+    PythonDecisionHook:
       type: object
-      required: [error]
+      required: [hook_id, text, kind, captured_at]
       properties:
-        error:
+        hook_id: { type: string }
+        text: { type: string }
+        kind: { type: string }
+        captured_at: { type: string, format: date-time }
+        used_at: { type: string, format: date-time, nullable: true }
+
+    PythonDecisionOpenThread:
+      type: object
+      required: [thread_id, text, kind, state, opened_at]
+      properties:
+        thread_id: { type: string }
+        text: { type: string }
+        kind: { type: string }
+        state: { $ref: '#/components/schemas/ThreadStatus' }
+        opened_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time, nullable: true }
+        last_attempted_at: { type: string, format: date-time, nullable: true }
+
+    PythonDecisionCandidateHistory:
+      type: object
+      properties:
+        nudges:
+          type: array
+          items: { type: object, additionalProperties: true }
+        omitted:
           type: object
-          required: [code, message]
           properties:
-            code: { type: string }
-            message: { type: string }
+            count: { type: integer, minimum: 0 }
+            oldest_at: { type: string, format: date-time, nullable: true }
+          additionalProperties: true
+        last_action_at: { type: string, format: date-time, nullable: true }
+        quiet_until: { type: string, format: date-time, nullable: true }
+        allowed_goals:
+          type: array
+          items: { type: string, enum: [check_in, make_plan] }
+
+    PythonDecisionEngineInput:
+      description: >-
+        Private Python decision-engine snapshot, not an HTTP payload or
+        endpoint. The boundary maps asOf to as_of, inputSnapshotId to
+        input_snapshot_id, trigger.type to trigger.kind, personId to
+        person_id, capturesCompletedAt to capture_completed_at, and
+        cardsRemaining to cards_remaining.
+      type: object
+      required: [as_of, input_snapshot_id, trigger, user, budget, candidates]
+      properties:
+        as_of:
+          {
+            type: string,
+            format: date-time,
+            description: Frozen Clock. Exact time the snapshot was created.,
+          }
+        input_snapshot_id: { type: string, description: Unique ID for this snapshot version. }
+        trigger:
+          type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [scheduled, input_triggered, manual_request] }
+            person_id: { type: string, nullable: true }
+            capture_completed_at: { type: string, format: date-time, nullable: true }
+          description: Details the trigger.
+        user:
+          type: object
+          required: [timezone]
+          properties:
+            timezone: { type: string, description: IANA timezone format. }
+            routines:
+              description: User routines supplied by the App data adapter.
+              oneOf:
+                - type: object
+                  additionalProperties: true
+                - type: array
+                  items: { type: object, additionalProperties: true }
+            moved_at: { type: string, format: date, nullable: true }
+          additionalProperties: true
+          description: Contains user preferences.
+        budget:
+          type: object
+          required: [cards_remaining, push_available]
+          properties:
+            cards_remaining: { type: integer, minimum: 0, maximum: 3 }
+            push_available: { type: boolean }
+        user_text_input:
+          type: string
+          default: ''
+          description: Current user text used for interaction analysis.
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/PythonDecisionCandidate' }
+          description: Array of eligible contacts.
+
+    PythonDecisionEngineOutput:
+      description: >-
+        Private Python decision-engine result, not an HTTP payload or
+        endpoint. The boundary maps input_snapshot_id, person_id, action_type,
+        hook_ref, and non_message_action to their camelCase public forms.
+      type: object
+      additionalProperties: false
+      required:
+        - decision
+        - input_snapshot_id
+        - person_id
+        - action_type
+        - goal
+        - hook_ref
+        - draft
+        - non_message_action
+        - rationale
+      properties:
+        decision: { type: string, enum: [action, none] }
+        input_snapshot_id: { type: string }
+        person_id: { type: string, nullable: true }
+        action_type: { type: string, enum: [message, non_message], nullable: true }
+        goal: { type: string, enum: [check_in, make_plan], nullable: true }
+        hook_ref: { type: string, nullable: true }
+        draft: { type: string, nullable: true }
+        non_message_action:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [kind, instruction]
+          properties:
+            kind: { type: string }
+            instruction: { type: string }
+        rationale: { type: string, description: Trace-only decision explanation. }
+
+    DecisionEngineHealth:
+      type: object
+      required: [status, model]
+      properties:
+        status: { type: string, enum: [ok] }
+        model:
+          type: string
+          description: Gemini model configured for this DE service instance.
+
+    SupabaseDecisionRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: Owner profile ID used to scope all database reads and writes.
+        capture_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >-
+            Extracted capture that triggers an input-triggered decision. Omit
+            for scheduled or manual requests.
+        trigger_kind:
+          type: string
+          enum: [scheduled, input_triggered, manual_request]
+          nullable: true
+          description: >-
+            Defaults to input_triggered when capture_id is supplied and to
+            scheduled otherwise.
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional frozen clock; defaults to the current UTC time.
+        cards_remaining:
+          type: integer
+          minimum: 0
+          maximum: 3
+          nullable: true
+          description: Optional daily card budget; defaults to 3.
+        push_available:
+          type: boolean
+          nullable: true
+          description: >-
+            Optional push availability; defaults to false for input-triggered
+            runs and true otherwise.
+
+    SupabaseDecisionResult:
+      type: object
+      required:
+        - input
+        - output
+        - interaction_analysis
+        - state_updates
+        - excluded
+        - nudge_id
+      properties:
+        input:
+          $ref: '#/components/schemas/PythonDecisionEngineInput'
+        output:
+          $ref: '#/components/schemas/PythonDecisionEngineOutput'
+        interaction_analysis:
+          $ref: '#/components/schemas/InteractionAnalysisResult'
+        state_updates:
+          type: array
+          items: { $ref: '#/components/schemas/DecisionStateUpdate' }
+        excluded:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+          description: Candidate IDs mapped to deterministic exclusion reasons.
+        nudge_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Persisted nudge ID, or null when no message action was stored.
+
+    InteractionAnalysisResult:
+      type: object
+      required:
+        - person_id
+        - real_world
+        - reciprocal
+        - substantive
+        - kind
+        - thread_ref
+        - thread_transition
+        - rationale
+      properties:
+        person_id: { type: string, nullable: true }
+        real_world: { type: boolean }
+        reciprocal: { type: boolean }
+        substantive: { type: boolean }
+        kind: { type: string }
+        thread_ref: { type: string, nullable: true }
+        thread_transition:
+          type: string
+          enum: [attempted, resolved, lapsed]
+          nullable: true
+        rationale: { type: string }
+
+    DecisionFeedbackRequest:
+      type: object
+      required: [input_snapshot_id, person_id, feedback, at]
+      properties:
+        input_snapshot_id: { type: string }
+        person_id: { type: string }
+        nudge_id: { type: string, nullable: true }
+        feedback: { type: string, enum: [skipped, acted, superseded] }
+        at: { type: string, format: date-time }
+        user_text_input:
+          type: string
+          default: ''
+          description: >-
+            Interaction text used when acted or superseded feedback is
+            reanalyzed. It is ignored for skipped feedback.
+
+    SupabaseDecisionFeedbackRequest:
+      allOf:
+        - $ref: '#/components/schemas/DecisionFeedbackRequest'
+        - type: object
+          required: [user_id, nudge_id]
+          properties:
+            user_id:
+              type: string
+              format: uuid
+              description: Owner profile ID used to authorize database access.
+            nudge_id:
+              type: string
+              format: uuid
+              description: Persisted suggestion receiving this feedback.
+
+    DecisionFeedbackResult:
+      type: object
+      required:
+        - input_snapshot_id
+        - person_id
+        - feedback
+        - nudge_id
+        - state_updates
+        - candidate
+      properties:
+        input_snapshot_id: { type: string }
+        person_id: { type: string }
+        feedback: { type: string, enum: [skipped, acted, superseded] }
+        nudge_id: { type: string }
+        state_updates:
+          type: array
+          items: { $ref: '#/components/schemas/DecisionStateUpdate' }
+        candidate:
+          $ref: '#/components/schemas/PythonDecisionCandidate'
+
+    DecisionStateView:
+      type: object
+      required: [input_snapshot_id, state_updates, candidates]
+      properties:
+        input_snapshot_id: { type: string }
+        state_updates:
+          type: array
+          items: { $ref: '#/components/schemas/DecisionStateUpdate' }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/PythonDecisionCandidate' }
+
+    DecisionStateUpdate:
+      oneOf:
+        - $ref: '#/components/schemas/PersonStateUpdate'
+        - $ref: '#/components/schemas/OpenThreadStateUpdate'
+      discriminator:
+        propertyName: entity
+        mapping:
+          person: '#/components/schemas/PersonStateUpdate'
+          open_thread: '#/components/schemas/OpenThreadStateUpdate'
+
+    PersonStateUpdate:
+      type: object
+      additionalProperties: false
+      required: [entity, person_id, relationship_state]
+      properties:
+        entity: { type: string, enum: [person] }
+        person_id: { type: string }
+        relationship_state: { $ref: '#/components/schemas/RelationshipState' }
+
+    OpenThreadStateUpdate:
+      type: object
+      additionalProperties: false
+      required: [entity, thread_id, status]
+      properties:
+        entity: { type: string, enum: [open_thread] }
+        thread_id: { type: string }
+        status: { $ref: '#/components/schemas/ThreadStatus' }
 
   responses:
     BadRequest:
       description: Invalid request
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/Error' }
-    Unauthorized:
-      description: Authentication required
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
