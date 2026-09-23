@@ -10,8 +10,8 @@ info:
     endpoint derives the calling user from the authenticated session;
 
 servers:
-  - url: /api
-    description: Next.js API base path
+  - url: https://api.example.com
+    description: Production
 
 tags:
   - name: Me
@@ -20,11 +20,32 @@ tags:
   - name: Captures
   - name: Suggestions
   - name: Experiments
+  - name: AI
+  - name: Decision Engine
+    description: >-
+      Python Decision Engine contract. These operations are documented here so
+      App API and DE API appear in one Swagger document; this does not change
+      service routing, deployment, or runtime integration.
 
 security:
   - bearerAuth: []
 
 paths:
+  /health:
+    get:
+      tags: [Decision Engine]
+      operationId: getDecisionEngineHealth
+      summary: Check Decision Engine service health
+      description: Reports whether the Python Decision Engine process is running.
+      security: []
+      responses:
+        '200':
+          description: Decision Engine service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionEngineHealth'
+
   # ----------------------------------------
   # ME (profiles)
   # ----------------------------------------
@@ -154,10 +175,7 @@ paths:
     delete:
       tags: [People]
       summary: Delete a person
-      description: >-
-        Cascades to hooks, threads, and nudge state for this person. The
-        database unlinks this person's ID from captures.contact_ids while
-        retaining capture records in the user's account history.
+      description: Cascades to hooks, threads, and nudge state for this person. Unlinks the person from captures via database trigger while retaining captures in user account history.
       responses:
         '204':
           description: Person deleted
@@ -321,17 +339,16 @@ paths:
           application/json:
             schema:
               type: object
-              required: [transcript]
+              required: [transcript, contactIds]
               properties:
                 transcript:
                   type: string
                 contactIds:
                   type: array
-                  minItems: 1
                   items: { type: string }
                   description: >-
-                    Existing contact IDs. Omit this field to let extraction
-                    propose a new contact for manual approval.
+                    Existing contact IDs, or omit to let extraction propose
+                    a new contact for manual approval.
       responses:
         '202':
           description: Accepted for extraction
@@ -466,6 +483,181 @@ paths:
               schema:
                 $ref: '#/components/schemas/Experiment'
 
+  # ----------------------------------------
+  # AI (stateless utility calls)
+  # ----------------------------------------
+
+  /ai/rewrite:
+    post:
+      tags: [AI]
+      summary: Rewrite text (concise / grammar)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content, mode]
+              properties:
+                content: { type: string }
+                mode: { type: string, enum: [concise, grammar] }
+      responses:
+        '200':
+          description: Rewritten text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content: { type: string }
+
+  # ----------------------------------------
+  # DECISION ENGINE (Python service)
+  # Documentation-only merge: runtime routing remains unchanged.
+  # ----------------------------------------
+
+  /v1/decisions:
+    post:
+      tags: [Decision Engine]
+      operationId: createDecision
+      summary: Create a Decision Engine recommendation
+      description: >-
+        Accepts the existing snake_case DE input contract, applies interaction
+        analysis and deterministic state rules, and returns the exact
+        nine-field DE output contract.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PythonDecisionEngineInput'
+      responses:
+        '200':
+          description: Decision completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PythonDecisionEngineOutput'
+        '422':
+          $ref: '#/components/responses/DEValidationError'
+        '503':
+          $ref: '#/components/responses/DEServiceUnavailable'
+
+  /v1/decisions/feedback:
+    post:
+      tags: [Decision Engine]
+      operationId: createDecisionFeedback
+      summary: Apply feedback to a Decision Engine recommendation
+      description: >-
+        Records skipped, acted, or superseded feedback. Acted and superseded
+        feedback may re-run interaction analysis; skipped feedback does not
+        update person or open-thread state.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionFeedbackRequest'
+      responses:
+        '200':
+          description: Feedback processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionFeedbackResult'
+        '422':
+          $ref: '#/components/responses/DEValidationError'
+        '503':
+          $ref: '#/components/responses/DEServiceUnavailable'
+
+  /v1/decisions/{input_snapshot_id}/state-updates:
+    parameters:
+      - name: input_snapshot_id
+        in: path
+        required: true
+        description: ID of a snapshot previously processed by the DE service.
+        schema: { type: string }
+    get:
+      tags: [Decision Engine]
+      operationId: getDecisionStateUpdates
+      summary: Get state updates for a Decision Engine snapshot
+      security: []
+      responses:
+        '200':
+          description: Snapshot candidates and code-owned state updates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionStateView'
+        '404':
+          $ref: '#/components/responses/DENotFound'
+
+  /v1/integrations/supabase/decisions:
+    post:
+      tags: [Decision Engine]
+      operationId: createDecisionFromSupabase
+      summary: Create and persist a decision using Supabase data
+      description: >-
+        Internal server-to-server endpoint. It reads the approved Supabase
+        sources, constructs the existing DE input contract, runs the Python
+        Decision Engine, and persists the canonical result.
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupabaseDecisionRequest'
+      responses:
+        '200':
+          description: Decision completed and canonical result persisted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupabaseDecisionResult'
+        '401':
+          $ref: '#/components/responses/DEUnauthorized'
+        '422':
+          $ref: '#/components/responses/DEValidationError'
+        '503':
+          $ref: '#/components/responses/DEServiceUnavailable'
+
+  /v1/integrations/supabase/decisions/feedback:
+    post:
+      tags: [Decision Engine]
+      operationId: createDecisionFeedbackFromSupabase
+      summary: Apply and persist decision feedback using Supabase data
+      description: >-
+        Internal server-to-server endpoint. It restores the required decision
+        context when necessary, applies the existing feedback rules, and
+        persists the canonical feedback and state changes.
+      security:
+        - internalToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupabaseDecisionFeedbackRequest'
+      responses:
+        '200':
+          description: Feedback processed and persisted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionFeedbackResult'
+        '401':
+          $ref: '#/components/responses/DEUnauthorized'
+        '404':
+          $ref: '#/components/responses/DENotFound'
+        '422':
+          $ref: '#/components/responses/DEValidationError'
+        '503':
+          $ref: '#/components/responses/DEServiceUnavailable'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -473,6 +665,12 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Supabase-issued session access token.
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+      description: Server-to-server token configured as DECISION_ENGINE_INTERNAL_TOKEN.
+
   parameters:
     PersonId:
       name: id
@@ -521,11 +719,6 @@ components:
     CaptureProcessingStatus:
       type: string
       enum: [pending_transcription, pending_review, pending_extraction, extracted, failed]
-      description: >-
-        Voice captures progress from pending_transcription to pending_review
-        once a transcript is available, then to pending_extraction after the
-        user submits the reviewed transcript. Text captures enter
-        pending_extraction directly. Both flows end extracted or failed.
 
     RelationshipType:
       type: string
@@ -811,98 +1004,28 @@ components:
                 status: { type: string, nullable: true }
               additionalProperties: true
             ruminationFeedback: { type: string, nullable: true }
-            failure:
-              $ref: '#/components/schemas/CaptureFailure'
-              nullable: true
-
-    CaptureFailure:
-      type: object
-      additionalProperties: false
-      required: [code, message, retryable]
-      description: Stable failure details when a capture status is failed.
-      properties:
-        code: { type: string, description: Stable machine-readable error code. }
-        message: { type: string, description: User-facing explanation. }
-        retryable: { type: boolean, description: Whether retrying the capture can succeed. }
-
-    CaptureExtractionOutput:
-      type: object
-      required: [personName, newHooks, newThreads, context]
-      properties:
-        personName: { type: string }
-        newHooks:
-          type: array
-          items: { $ref: '#/components/schemas/ExtractedHookEntry' }
-        newThreads:
-          type: array
-          items: { $ref: '#/components/schemas/ExtractedThreadEntry' }
-        context:
-          type: object
-          additionalProperties: true
-          description: Extensible contact facts; actionable commitments remain threads.
-
-    Error:
-      type: object
-      required: [error]
-      properties:
-        error:
-          type: object
-          required: [code, message]
-          properties:
-            code: { type: string }
-            message: { type: string }
 
     SuggestedAction:
-      oneOf:
-        - $ref: '#/components/schemas/MessageSuggestedAction'
-        - $ref: '#/components/schemas/NonMessageSuggestedAction'
-      discriminator:
-        propertyName: actionType
-        mapping:
-          message: '#/components/schemas/MessageSuggestedAction'
-          non_message: '#/components/schemas/NonMessageSuggestedAction'
-
-    MessageSuggestedAction:
       type: object
-      additionalProperties: false
-      required: [id, personId, goal, actionType, inputSnapshotId, draft, expiresAt]
+      required: [id, personId, goal, actionType, expiresAt]
       properties:
         id: { type: string }
         personId: { type: string }
         goal: { type: string, enum: [check_in, make_plan] }
-        actionType: { type: string, enum: [message] }
-        inputSnapshotId:
-          { type: string, description: Immutable decision snapshot that produced this suggestion. }
-        draft: { type: string }
-        hookRef: { type: string, nullable: true }
-        threadRef: { type: string, nullable: true }
-        expiresAt: { type: string, format: date-time }
-
-    NonMessageSuggestedAction:
-      type: object
-      additionalProperties: false
-      required: [id, personId, goal, actionType, inputSnapshotId, nonMessageAction, expiresAt]
-      properties:
-        id: { type: string }
-        personId: { type: string }
-        goal: { type: string, enum: [check_in, make_plan] }
-        actionType: { type: string, enum: [non_message] }
-        inputSnapshotId:
-          { type: string, description: Immutable decision snapshot that produced this suggestion. }
+        actionType: { type: string, enum: [message, non_message] }
+        inputSnapshotId: { type: string, nullable: true }
+        draft: { type: string, nullable: true }
         nonMessageAction:
-          $ref: '#/components/schemas/NonMessageAction'
+          type: object
+          nullable: true
+          properties:
+            kind: { type: string }
+            label: { type: string }
+            payload: { type: object }
+          additionalProperties: true
         hookRef: { type: string, nullable: true }
         threadRef: { type: string, nullable: true }
         expiresAt: { type: string, format: date-time }
-
-    NonMessageAction:
-      type: object
-      additionalProperties: false
-      required: [kind, label, payload]
-      properties:
-        kind: { type: string }
-        label: { type: string }
-        payload: { type: object, additionalProperties: true }
 
     CreateExperimentRequest:
       type: object
@@ -986,12 +1109,13 @@ components:
             format: date-time,
             description: Frozen Clock. Exact time the snapshot was created.,
           }
-        inputSnapshotId: { type: string, description: Unique ID for this snapshot version. }
+        inputSnapshotId:
+          { type: string, format: uuid, description: Unique ID for this snapshot version. }
         trigger:
           type: object
           required: [type]
           properties:
-            type: { type: string, enum: [scheduled, input_triggered, manual_request] }
+            type: { type: string, enum: [scheduled, input_triggered] }
             personId: { type: string, format: uuid, nullable: true }
             capturesCompletedAt: { type: string, format: date-time, nullable: true }
           description: Details the trigger.
@@ -1015,53 +1139,26 @@ components:
           description: Array of eligible contacts.
 
     DecisionEngineOutput:
-      oneOf:
-        - $ref: '#/components/schemas/NoDecisionOutput'
-        - $ref: '#/components/schemas/MessageDecisionOutput'
-        - $ref: '#/components/schemas/NonMessageDecisionOutput'
-
-    NoDecisionOutput:
       type: object
-      additionalProperties: false
       required: [decision, inputSnapshotId, rationale]
       properties:
-        decision: { type: string, enum: [none] }
-        inputSnapshotId: { type: string }
-        rationale: { type: string, description: Trace-only decision rationale. }
-
-    MessageDecisionOutput:
-      type: object
-      additionalProperties: false
-      required: [decision, inputSnapshotId, personId, actionType, goal, draft, rationale]
-      properties:
-        decision: { type: string, enum: [action] }
-        inputSnapshotId: { type: string }
-        personId: { type: string }
-        actionType: { type: string, enum: [message] }
-        goal: { type: string, enum: [check_in, make_plan] }
-        hookRef: { type: string, nullable: true }
-        draft: { type: string }
-        rationale: { type: string, description: Trace-only decision rationale. }
-
-    NonMessageDecisionOutput:
-      type: object
-      additionalProperties: false
-      required: [decision, inputSnapshotId, personId, actionType, goal, nonMessageAction, rationale]
-      properties:
-        decision: { type: string, enum: [action] }
-        inputSnapshotId: { type: string }
-        personId: { type: string }
-        actionType: { type: string, enum: [non_message] }
-        goal: { type: string, enum: [check_in, make_plan] }
-        nonMessageAction: { $ref: '#/components/schemas/NonMessageAction' }
-        rationale: { type: string, description: Trace-only decision rationale. }
+        decision: { type: string, enum: [action, none] }
+        inputSnapshotId: { type: string, format: uuid }
+        personId: { type: string, format: uuid, nullable: true }
+        actionType: { type: string, enum: [message, non_message], nullable: true }
+        goal: { type: string, enum: [check_in, make_plan], nullable: true }
+        hookRef: { type: string, format: uuid, nullable: true }
+        draft: { type: string, nullable: true }
+        nonMessageAction:
+          {
+            type: object,
+            nullable: true,
+            description: Structured instruction for a non-message action (e.g.,
+            get contacts info).,
+          }
+        rationale: { type: string, description: Trace-only text describing the LLM's reasoning. }
 
     PythonDecisionCandidate:
-      description: >-
-        Private Python decision-engine candidate. This schema is not an HTTP
-        payload or endpoint; the boundary maps public personId,
-        relationshipState, openThreads, and nonMessageAction to person_id,
-        relationship_state, open_threads, and non_message_action.
       type: object
       required:
         - person_id
@@ -1096,7 +1193,6 @@ components:
         transcript_excerpts:
           type: array
           items: { type: string }
-          description: Data-minimized/redacted snippets only; raw transcripts are never included.
 
     PythonDecisionCandidateProfile:
       type: object
@@ -1146,12 +1242,6 @@ components:
           items: { type: string, enum: [check_in, make_plan] }
 
     PythonDecisionEngineInput:
-      description: >-
-        Private Python decision-engine snapshot, not an HTTP payload or
-        endpoint. The boundary maps asOf to as_of, inputSnapshotId to
-        input_snapshot_id, trigger.type to trigger.kind, personId to
-        person_id, capturesCompletedAt to capture_completed_at, and
-        cardsRemaining to cards_remaining.
       type: object
       required: [as_of, input_snapshot_id, trigger, user, budget, candidates]
       properties:
@@ -1201,10 +1291,6 @@ components:
           description: Array of eligible contacts.
 
     PythonDecisionEngineOutput:
-      description: >-
-        Private Python decision-engine result, not an HTTP payload or
-        endpoint. The boundary maps input_snapshot_id, person_id, action_type,
-        hook_ref, and non_message_action to their camelCase public forms.
       type: object
       additionalProperties: false
       required:
@@ -1414,25 +1500,86 @@ components:
 
     PersonStateUpdate:
       type: object
-      additionalProperties: false
-      required: [entity, person_id, relationship_state]
+      required:
+        - entity
+        - person_id
+        - previous_state
+        - new_state
+        - meaningful
+        - reported_interaction_count
+        - last_reported_interaction_at
+        - reason
+        - updated_at
       properties:
         entity: { type: string, enum: [person] }
         person_id: { type: string }
-        relationship_state: { $ref: '#/components/schemas/RelationshipState' }
+        previous_state: { $ref: '#/components/schemas/RelationshipState' }
+        new_state: { $ref: '#/components/schemas/RelationshipState' }
+        meaningful: { type: boolean }
+        reported_interaction_count: { type: integer, minimum: 0 }
+        last_reported_interaction_at: { type: string, format: date-time, nullable: true }
+        reason: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
 
     OpenThreadStateUpdate:
       type: object
-      additionalProperties: false
-      required: [entity, thread_id, status]
+      required:
+        - entity
+        - thread_id
+        - previous_state
+        - new_state
+        - reason
+        - updated_at
       properties:
         entity: { type: string, enum: [open_thread] }
         thread_id: { type: string }
-        status: { $ref: '#/components/schemas/ThreadStatus' }
+        previous_state: { $ref: '#/components/schemas/ThreadStatus' }
+        new_state: { $ref: '#/components/schemas/ThreadStatus' }
+        reason: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    DEHTTPError:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+
+    CaptureExtractionOutput:
+      type: object
+      properties:
+        personName: { type: string }
+        newHooks:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ExtractedHookEntry' }
+        newThreads:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/ExtractedThreadEntry' }
+        context:
+          type: object
+          additionalProperties: true
+          description: Structured JSON containing personal facts (e.g., corgi names, shared memories, location, work, family, availability) for personalized messaging.
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
 
   responses:
     BadRequest:
       description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Authentication required
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1441,3 +1588,28 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    InternalServerError:
+      description: Unexpected internal server error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    DEValidationError:
+      description: Decision Engine input validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DEHTTPError' }
+    DENotFound:
+      description: Decision Engine snapshot was not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DEHTTPError' }
+    DEServiceUnavailable:
+      description: Decision Engine model or dependency is unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DEHTTPError' }
+    DEUnauthorized:
+      description: Internal Decision Engine integration token is missing or invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DEHTTPError' }
