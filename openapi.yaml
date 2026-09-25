@@ -10,8 +10,8 @@ info:
     endpoint derives the calling user from the authenticated session;
 
 servers:
-  - url: https://api.example.com
-    description: Production
+  - url: /api
+    description: Next.js API route base
 
 tags:
   - name: Me
@@ -19,6 +19,7 @@ tags:
   - name: Threads
   - name: Captures
   - name: Suggestions
+  - name: Prompts
   - name: Experiments
   - name: AI
   - name: Decision Engine
@@ -242,10 +243,12 @@ paths:
       tags: [Threads]
       summary: Update a thread's status
       description: >-
-        Resolving a thread (e.g. "did it happen? yes") is how a reported
-        real-world interaction is logged — this is what should drive
-        relationship_state transitions (growing → keeping), not any in-app
-        action like copying a draft.
+        Resolving a thread (e.g. "did it happen? yes") logs a qualifying
+        user-reported interaction. Relationship evidence also includes
+        accepted acted suggestions (copy/share via POST /suggestions/{id}/act):
+        both sources can drive relationship_state transitions such as
+        growing → keeping. Deduplicating when a report describes the same
+        interaction as an acted suggestion is a separate reconciliation concern.
       requestBody:
         required: true
         content:
@@ -358,6 +361,44 @@ paths:
                 $ref: '#/components/schemas/CaptureStatus'
 
   # ----------------------------------------
+  # PROMPTS
+  # ----------------------------------------
+
+  /prompts/{id}/action:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Prompts]
+      summary: Perform an action on a prompt (quick confirmations / management)
+      description: >-
+        Handles quick confirmations ("Did it happen?" / Yes, No, Reschedule) or
+        general prompt actions (accept, reject, snooze, edit).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptActionRequest'
+      responses:
+        '200':
+          description: Prompt action applied successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptActionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ----------------------------------------
   # SUGGESTIONS (nudges)
   # ----------------------------------------
 
@@ -390,15 +431,34 @@ paths:
       tags: [Suggestions]
       summary: Mark a suggestion as acted on (e.g. draft copied/shared)
       description: >-
-        Updates nudge status only. Does not by itself change relationship_state —
-        only a resolved thread (reported real-world interaction) does that.
+        Records copy/share as an acted suggestion. The first accepted action
+        atomically resolves its linked thread, records one meaningful interaction
+        and updates relationship and action-tracking state. The suggestion must
+        belong to the caller, be shown, and be within its 24-hour lifetime.
+        Repeating an already-acted request succeeds without additional effects or
+        timestamp changes. The server assigns the action time; clients do not supply it.
       responses:
         '200':
-          description: Updated
+          description: First action accepted, or an already-acted request repeated; returns SuggestedAction.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuggestedAction'
+        '400':
+          description: Invalid suggestion or user ID.
+        '401':
+          description: Authentication required.
+        '403':
+          description: Caller is not permitted to perform the operation.
+        '404':
+          description: Suggestion or contact unavailable to the caller.
+        '409':
+          description: >-
+            Invalid lifecycle transition, elapsed expiry, inconsistent
+            linked-thread ownership, or a concurrency conflict
+            (`RETRY_REQUIRED`) so the caller can retry.
+        '500':
+          description: Unexpected persistence failure; this operation's writes are rolled back.
 
   /suggestions/{id}/dismiss:
     parameters:
@@ -524,7 +584,9 @@ paths:
       description: >-
         Accepts the existing snake_case DE input contract, applies interaction
         analysis and deterministic state rules, and returns the exact
-        nine-field DE output contract.
+        nine-field DE output contract. Database-driven persistence retries once
+        on a stale person/thread write conflict; a second conflict returns 409
+        with code RETRY_REQUIRED without exposing database diagnostics.
       security: []
       requestBody:
         required: true
@@ -539,6 +601,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PythonDecisionEngineOutput'
+        '409':
+          $ref: '#/components/responses/DEConflict'
         '422':
           $ref: '#/components/responses/DEValidationError'
         '503':
@@ -550,9 +614,15 @@ paths:
       operationId: createDecisionFeedback
       summary: Apply feedback to a Decision Engine recommendation
       description: >-
-        Records skipped, acted, or superseded feedback. Acted and superseded
-        feedback may re-run interaction analysis; skipped feedback does not
-        update person or open-thread state.
+        Records skipped, acted, or superseded feedback. Acted feedback uses the
+        shared `persist_acted_suggestion` path: it does not re-run interaction
+        analysis or use client `at` / feedback text to determine effects;
+        already-acted retries return success; invalid lifecycle transitions
+        return 409. For acted responses, `state_updates` is an empty array
+        because the RPC returns the saved nudge rather than a transition trace —
+        an empty array does not mean thread/contact effects were skipped.
+        Superseded feedback may re-run interaction analysis. Skipped feedback
+        does not update person or open-thread state.
       security: []
       requestBody:
         required: true
@@ -567,6 +637,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DecisionFeedbackResult'
+        '409':
+          $ref: '#/components/responses/DEConflict'
         '422':
           $ref: '#/components/responses/DEValidationError'
         '503':
@@ -602,7 +674,9 @@ paths:
       description: >-
         Internal server-to-server endpoint. It reads the approved Supabase
         sources, constructs the existing DE input contract, runs the Python
-        Decision Engine, and persists the canonical result.
+        Decision Engine, and persists the canonical result. On a stale
+        person/thread write conflict the service rebuilds context once; a
+        second conflict returns 409 with code RETRY_REQUIRED.
       security:
         - internalToken: []
       requestBody:
@@ -620,6 +694,8 @@ paths:
                 $ref: '#/components/schemas/SupabaseDecisionResult'
         '401':
           $ref: '#/components/responses/DEUnauthorized'
+        '409':
+          $ref: '#/components/responses/DEConflict'
         '422':
           $ref: '#/components/responses/DEValidationError'
         '503':
@@ -633,7 +709,10 @@ paths:
       description: >-
         Internal server-to-server endpoint. It restores the required decision
         context when necessary, applies the existing feedback rules, and
-        persists the canonical feedback and state changes.
+        persists the canonical feedback and state changes. Acted feedback uses
+        the shared `persist_acted_suggestion` path (no model re-analysis; empty
+        `state_updates` does not mean effects were skipped; retries succeed;
+        invalid transitions return 409).
       security:
         - internalToken: []
       requestBody:
@@ -653,6 +732,8 @@ paths:
           $ref: '#/components/responses/DEUnauthorized'
         '404':
           $ref: '#/components/responses/DENotFound'
+        '409':
+          $ref: '#/components/responses/DEConflict'
         '422':
           $ref: '#/components/responses/DEValidationError'
         '503':
@@ -755,7 +836,7 @@ components:
             type: string,
             format: date-time,
             nullable: true,
-            description: Timestamp of the last interaction with this contact. Crucial for tracking relationship activity and powering Story 3 (Returning).,
+            description: Latest recognized interaction timestamp from an accepted acted suggestion or qualifying reported interaction. Must not move an existing later value backwards.,
           }
         context:
           type: object
@@ -897,6 +978,7 @@ components:
           type: array
           items: { type: string }
         weeklyRoutine: { type: string, nullable: true }
+        timezone: { type: string, description: IANA timezone format. }
         createdAt: { type: string, format: date-time }
 
     UpdateSelfRequest:
@@ -935,6 +1017,7 @@ components:
           type: array
           items: { type: string }
         weeklyRoutine: { type: string }
+        timezone: { type: string, description: IANA timezone format. }
 
     CreateTextCaptureRequest:
       type: object
@@ -1071,7 +1154,7 @@ components:
             type: string,
             format: date-time,
             nullable: true,
-            description: Timestamp of the last reported interaction. Powers Story 3 (Returning) and quiet period logic.,
+            description: Latest recognized interaction timestamp. Powers Story 3 (Returning) and quiet period logic; not a 60-day count.,
           }
         upcomingPlan:
           { type: object, nullable: true, description: Details of a known upcoming plan, if any. }
@@ -1200,6 +1283,19 @@ components:
         how_we_met: { type: string, nullable: true }
         logistics: { type: string, nullable: true }
         contact_info_present: { type: boolean, default: true }
+        is_favorite:
+          type: boolean
+          default: false
+          description: Contact-prioritization flag supplied by contacts.is_favorite.
+        birthday:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional contact birthday supplied by contacts.birthday.
+        memories:
+          type: array
+          items: { type: string, format: uri }
+          description: Contact memory-gallery URLs supplied by contacts.memories.
 
     PythonDecisionHook:
       type: object
@@ -1473,6 +1569,10 @@ components:
         state_updates:
           type: array
           items: { $ref: '#/components/schemas/DecisionStateUpdate' }
+          description: >-
+            For acted feedback this is always empty because persistence returns
+            the saved nudge rather than a transition trace. An empty array does
+            not mean relationship or thread effects were skipped.
         candidate:
           $ref: '#/components/schemas/PythonDecisionCandidate'
 
@@ -1572,6 +1672,36 @@ components:
             code: { type: string }
             message: { type: string }
 
+    PromptActionRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [accept, reject, snooze, edit, yes, no, reschedule]
+          description: >-
+            Action to perform. Supports technical actions (accept, reject, snooze, edit)
+            and quick confirmation labels (yes, no, reschedule).
+        editedDraft:
+          type: string
+          description: Updated draft text when action is edit.
+        snoozeDays:
+          type: integer
+          minimum: 1
+          default: 3
+          description: Number of days to snooze when action is snooze or reschedule.
+
+    PromptActionResponse:
+      type: object
+      required: [success, promptId, actionApplied]
+      properties:
+        success:
+          type: boolean
+        promptId:
+          type: string
+        actionApplied:
+          type: string
+
   responses:
     BadRequest:
       description: Invalid request
@@ -1595,6 +1725,13 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     DEValidationError:
       description: Decision Engine input validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DEHTTPError' }
+    DEConflict:
+      description: >-
+        Decision Engine concurrency or lifecycle conflict. Body detail may use
+        code RETRY_REQUIRED when the caller should retry with fresh context.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/DEHTTPError' }
